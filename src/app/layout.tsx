@@ -3,11 +3,18 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Vexa | Premium AI Virtual Try-On",
-  description: "Experience the future of fashion with our AI-powered virtual try-on.",
+  title: "VEXA — AI 3D Body Avatar Platform",
+  description:
+    "VEXA is a B2B SaaS API platform powering personalized 3D body avatars for fashion marketplaces. Give every shopper a try-on that looks like them.",
+  openGraph: {
+    title: "VEXA — AI 3D Body Avatar Platform",
+    description:
+      "Personalized 3D avatars for fashion marketplaces. Built on SMPL-X + React Three Fiber.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -17,9 +24,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.className} antialiased selection:bg-primary/30 selection:text-primary-foreground`}>
+      <body className={`${inter.className} antialiased`}>
         <Navbar />
-        <main className="min-h-screen pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <main className="min-h-screen pt-20">
           {children}
         </main>
       </body>
