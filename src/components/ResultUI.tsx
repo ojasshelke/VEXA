@@ -92,7 +92,7 @@ export default function ResultUI() {
               className="absolute inset-0 w-full h-full"
             >
               <img 
-                src={tryOnResult.resultImage} 
+                src={tryOnResult.resultImage!} 
                 className="w-full h-full object-cover relative z-10" 
                 alt="AI Generated Result"
                 draggable={false}
@@ -107,7 +107,7 @@ export default function ResultUI() {
               style={{ width: `${sliderPosition}%` }}
             >
               <img 
-                src={tryOnResult.originalImage} 
+                src={tryOnResult.originalImage!} 
                 className="w-full h-full object-cover max-w-none" 
                 style={{ width: containerRef.current?.offsetWidth || '100%' }}
                 alt="Original Upload"
@@ -189,19 +189,19 @@ export default function ResultUI() {
             
             <div className="flex gap-4">
               <img 
-                src={tryOnResult.outfit.imageUrl} 
+                src={tryOnResult.outfit?.imageUrl!} 
                 className="w-16 h-20 object-cover rounded-lg bg-white/5 border border-white/10 my-auto shadow-md" 
-                alt={tryOnResult.outfit.name} 
+                alt={tryOnResult.outfit?.name!} 
               />
               <div className="flex-1 min-w-0 py-1">
                 <span className="text-[10px] uppercase tracking-wider text-[#d9f99d] block font-medium mb-1 border border-[#d9f99d]/30 bg-[#bef264]/10 w-fit px-1.5 py-0.5 rounded">
-                  {tryOnResult.outfit.category}
+                  {tryOnResult.outfit?.category!}
                 </span>
                 <h4 className="text-white font-medium text-sm mb-1 truncate">
-                  {tryOnResult.outfit.name}
+                  {tryOnResult.outfit?.name!}
                 </h4>
                 <div className="text-white/80 text-sm font-medium">
-                  ${tryOnResult.outfit.price.toFixed(2)}
+                  ${tryOnResult.outfit?.price.toFixed(2)!}
                 </div>
               </div>
             </div>

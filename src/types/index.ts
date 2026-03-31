@@ -66,10 +66,16 @@ export interface TryOnResult {
   productId: string;
   renderUrl?: string;
   resultImage?: string; // used for favorites display
+  originalImage?: string; // used for comparison slider
   outfit?: Outfit;      // linked outfit for favorites
   fitScore?: number;
   sizeRecommendation?: string;
   heatmapUrl?: string;
+  aiAnalysis?: {
+    confidence: number;
+    size: string;
+    suggestion: string;
+  };
   status: 'ready' | 'error';
   error?: string;
 }
