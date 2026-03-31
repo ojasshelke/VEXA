@@ -48,10 +48,13 @@ export default function TryOnFlow() {
           setTimeout(() => {
             setTryOnResult({
               id: `${Date.now()}`,
+              userId: 'demo_user_001',
+              productId: selectedOutfit.id,
               originalImage: userImage,
               resultImage: data.resultImage,
               outfit: selectedOutfit,
-              aiAnalysis: data.aiAnalysis
+              aiAnalysis: data.aiAnalysis,
+              status: 'ready'
             });
             setIsProcessing(false);
             setCurrentStep(0);
