@@ -118,7 +118,7 @@ export default function OnboardingPage() {
           <div className="flex items-center gap-2 justify-center">
             {STEPS.map((s, i) => {
               const isDone = i < currentStepIndex;
-              const isCurrent = (s.id as string) === (step as string) || (step === 'done' && i === STEPS.length - 1);
+              const isCurrent = (s.id as string) === (step as string) || ((step as string) === 'done' && i === STEPS.length - 1);
               return (
                 <React.Fragment key={s.id}>
                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
