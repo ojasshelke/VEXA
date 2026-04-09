@@ -36,20 +36,24 @@ function StatCard({ icon: Icon, label, value, trend }: { icon: React.ComponentTy
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="glass-panel p-6 rounded-2xl border border-white/10 hover:border-[#bef264]/20 transition-colors group"
+      whileHover={{ y: -5, transition: { duration: 0.2 } }}
+      className="glass-panel p-6 rounded-2xl border border-white/5 hover:border-[#bef264]/30 transition-all duration-300 group relative overflow-hidden"
     >
-      <div className="flex items-start justify-between mb-4">
-        <div className="w-10 h-10 rounded-xl bg-[#bef264]/10 flex items-center justify-center group-hover:bg-[#bef264]/20 transition-colors">
-          <Icon className="w-5 h-5 text-[#bef264]" />
+      <div className="absolute top-0 right-0 w-24 h-24 bg-[#bef264]/5 blur-3xl -mr-12 -mt-12 group-hover:bg-[#bef264]/10 transition-colors" />
+      <div className="flex items-start justify-between mb-4 relative z-10">
+        <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center group-hover:bg-[#bef264]/10 transition-colors border border-white/10 group-hover:border-[#bef264]/20">
+          <Icon className="w-6 h-6 text-white/70 group-hover:text-[#bef264] transition-colors" />
         </div>
         {trend && (
-          <span className="text-xs font-medium text-[#bef264] bg-[#bef264]/10 px-2 py-0.5 rounded-full">
+          <span className="text-[10px] font-bold tracking-wider uppercase text-[#bef264] bg-[#bef264]/10 px-2.5 py-1 rounded-lg border border-[#bef264]/20">
             {trend}
           </span>
         )}
       </div>
-      <p className="text-3xl font-bold text-white mb-1">{value}</p>
-      <p className="text-white/50 text-sm">{label}</p>
+      <div className="relative z-10">
+        <p className="text-3xl font-bold text-white mb-1 tracking-tight">{value}</p>
+        <p className="text-white/40 text-sm font-medium">{label}</p>
+      </div>
     </motion.div>
   );
 }
@@ -79,36 +83,63 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-8 space-y-8">
+    <div className="w-full max-w-7xl mx-auto px-4 py-8 space-y-10 relative">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-[400px] bg-[#bef264]/5 blur-[120px] rounded-full pointer-events-none -z-10" />
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-white">VEXA Dashboard</h1>
-          <p className="text-white/50 mt-1">API platform management · Last synced just now</p>
+          <motion.h1 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="text-4xl md:text-5xl font-black text-white tracking-tighter mb-3"
+          >
+            VEXA <span className="text-[#bef264]">HUB</span>
+          </motion.h1>
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="flex flex-wrap items-center gap-4 text-white/40"
+          >
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10">
+              <Activity className="w-3.5 h-3.5 text-[#bef264]" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#bef264]">System Live</span>
+            </div>
+            <p className="text-sm font-medium">API platform management · Last synced just now</p>
+          </motion.div>
         </div>
-        <button
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           id="dashboard-refresh"
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 text-sm transition-all"
+          className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-[#bef264] text-black font-bold text-sm transition-all hover:shadow-[0_0_30px_rgba(190,242,100,0.4)]"
         >
           <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+          Synchronize Data
+        </motion.button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-white/5 border border-white/10 rounded-xl w-fit">
+      <div className="flex gap-2 p-1.5 bg-white/5 border border-white/10 rounded-2xl w-fit backdrop-blur-3xl">
         {(['overview', 'keys', 'usage'] as const).map((tab) => (
           <button
             key={tab}
             id={`dashboard-tab-${tab}`}
             onClick={() => setActiveTab(tab)}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 capitalize ${
-              activeTab === tab
-                ? 'bg-[#bef264] text-black shadow-sm'
-                : 'text-white/50 hover:text-white'
-            }`}
+            className={`
+              relative px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300
+              ${activeTab === tab ? 'text-black' : 'text-white/40 hover:text-white/70'}
+            `}
           >
-            {tab}
+            {activeTab === tab && (
+              <motion.div
+                layoutId="activeTab"
+                className="absolute inset-0 bg-[#bef264] rounded-xl"
+                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+              />
+            )}
+            <span className="relative z-10">{tab}</span>
           </button>
         ))}
       </div>
