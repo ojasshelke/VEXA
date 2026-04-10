@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+smplx
+torch
+trimesh
+mediapipe
+opencv-python
+boto3
+requests
