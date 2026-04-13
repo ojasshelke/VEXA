@@ -18,6 +18,29 @@ import { RotateCcw, ZoomIn, ZoomOut, Sun } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { createClient } from '@supabase/supabase-js';
 
+// ─── Error Boundary (Declarative Error Handling) ─────────────────────────────
+
+class ErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // Log the error for observability (production: send to Sentry/DataDog)
+    console.error("AvatarModel Error Boundary caught an error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
 // ─── Avatar GLB Loader ────────────────────────────────────────────────────────
 
 interface AvatarModelProps {
@@ -166,6 +189,7 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
           gl={{ antialias: true, alpha: true }}
           className="w-full"
           style={{ height: '100%' }}
+          onError={(error) => console.error('Canvas Error:', error)}
         >
           <ambientLight intensity={0.5} />
           <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
@@ -175,7 +199,9 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
 
           <Suspense fallback={null}>
             {finalGlbUrl ? (
-              <AvatarModel glbUrl={finalGlbUrl} />
+              <ErrorBoundary fallback={<PlaceholderAvatar />}>
+                <AvatarModel key={finalGlbUrl} glbUrl={finalGlbUrl} />
+              </ErrorBoundary>
             ) : (
               <PlaceholderAvatar />
             )}
