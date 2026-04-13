@@ -56,8 +56,6 @@ export interface AvatarRecord {
 export interface TryOnRequest {
   userId: string;
   productId: string;
-  avatarGlbUrl: string;
-  clothingGlbUrl: string;
 }
 
 export interface TryOnResult {

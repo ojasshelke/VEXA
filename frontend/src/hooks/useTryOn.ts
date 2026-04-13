@@ -24,7 +24,7 @@ export interface UseTryOnState {
 }
 
 export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
-  triggerTryOn: (productId: string, avatarGlbUrl: string, clothingGlbUrl: string) => Promise<void>;
+  triggerTryOn: (productId: string) => Promise<void>;
   reset: () => void;
 } {
   const [state, setState] = useState<UseTryOnState>({
@@ -34,7 +34,7 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
   });
 
   const triggerTryOn = useCallback(
-    async (productId: string, avatarGlbUrl: string, clothingGlbUrl: string) => {
+    async (productId: string) => {
       setState({ status: 'loading', result: null, error: null });
 
       try {
@@ -49,8 +49,6 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
           },
           body: JSON.stringify({
             userId: opts.userId,
-            avatarGlbUrl,
-            clothingGlbUrl,
           }),
         });
 

@@ -54,7 +54,7 @@ export function TryOnOverlay({
   const { status, result, error, triggerTryOn, reset } = useTryOn({ userId });
 
   const handleTryOn = () => {
-    triggerTryOn(productId, avatarGlbUrl, clothingGlbUrl);
+    triggerTryOn(productId);
   };
 
   return (

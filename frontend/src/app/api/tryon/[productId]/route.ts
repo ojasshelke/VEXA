@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
 
   try {
     const body = await req.json();
-    const { userId, avatarGlbUrl, clothingGlbUrl } = body;
+    const { userId } = body;
 
     // 2. Validate user identity (Fixes: Security review)
     // Prevents one user from triggering operations on behalf of another.
@@ -36,20 +36,11 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       );
     }
 
-    if (!avatarGlbUrl || !clothingGlbUrl) {
-      return NextResponse.json(
-        { error: 'Missing required try-on URLs' },
-        { status: 400 }
-      );
-    }
-
     // 3. Call shared handleTryOn logic directly with authenticated context
     // The token is passed to handleTryOn to allow DB operations under user context.
     const token = req.headers.get('Authorization')?.split(' ')[1];
     const tryOnData = await handleTryOn({
       userId,
-      avatarGlbUrl,
-      clothingGlbUrl,
       productId
     }, token);
 

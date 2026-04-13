@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
+import { requireApiKey } from '@/lib/apiKeyMiddleware';
 import type { TryOnRequest } from '@/types';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -8,6 +9,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (isRateLimited(ip, 10)) {
     return NextResponse.json({ error: 'Too many requests. Please wait 60 seconds.' }, { status: 429 });
   }
+
+  // 1. Authenticate via VEXA API key (Fixes: Security review)
+  const { error: authError } = await requireApiKey(req);
+  if (authError) return authError;
 
   try {
     const body: TryOnRequest = await req.json();
@@ -25,10 +30,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
  * Can be called internally by other API routes to avoid HTTP anti-patterns.
  */
 export async function handleTryOn(body: TryOnRequest, token?: string) {
-  const { userId, avatarGlbUrl, clothingGlbUrl, productId } = body;
+  const { userId, productId } = body;
 
-  if (!userId || !avatarGlbUrl || !clothingGlbUrl || !productId) {
-    throw new Error('Missing required fields: userId, avatarGlbUrl, clothingGlbUrl, and productId are required.');
+  if (!userId || !productId) {
+    throw new Error('Missing required fields: userId and productId are required for canonical asset resolution.');
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -43,7 +48,31 @@ export async function handleTryOn(body: TryOnRequest, token?: string) {
     global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
   });
 
-  // 1. Check cache in tryon_results
+  // 1. Resolve Avatar URL from official records (Fixes: SSRF & Identity Review)
+  const { data: user } = await supabase
+    .from('users')
+    .select('avatar_url')
+    .eq('id', userId)
+    .single();
+
+  const avatarUrl = user?.avatar_url || 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/rp-character/model.glb';
+
+  // 2. Resolve Clothing URL from official records (Fixes: SSRF Review)
+  // We NEVER trust URLs provided directly from the client.
+  const { data: asset } = await supabase
+    .from('clothing_assets')
+    .select('glb_url, product_image_url')
+    .eq('product_id', productId)
+    .single();
+
+  if (!asset?.glb_url) {
+    throw new Error(`SSRF Prevention: No verified 3D assets found for product ID ${productId}.`);
+  }
+
+  const clothingUrl = asset.glb_url;
+  const productImageUrl = asset.product_image_url;
+
+  // 3. Check cache in tryon_results
   const { data: cached } = await supabase
     .from('tryon_results')
     .select('result_url')
@@ -55,7 +84,7 @@ export async function handleTryOn(body: TryOnRequest, token?: string) {
     return { result_url: cached.result_url, cached: true };
   }
 
-  // 2. No cache: Call Hugging Face API
+  // 4. No cache: Call Hugging Face API
   const hfKey = process.env.HUGGINGFACE_API_KEY;
   if (!hfKey) {
     throw new Error("Missing HUGGINGFACE_API_KEY environment variable");
@@ -69,8 +98,8 @@ export async function handleTryOn(body: TryOnRequest, token?: string) {
     },
     body: JSON.stringify({
       inputs: {
-        human_img: avatarGlbUrl,
-        garm_img: clothingGlbUrl
+        human_img: avatarUrl,
+        garm_img: clothingUrl
       }
     })
   });
@@ -103,13 +132,13 @@ export async function handleTryOn(body: TryOnRequest, token?: string) {
   
   const result_url = publicUrlData.publicUrl;
 
-  // 3. Save to tryon_results table
+  // 5. Save to tryon_results table
   const { error: insertError } = await supabase
     .from('tryon_results')
     .insert({
        user_id: userId,
        product_id: productId,
-       product_image_url: clothingGlbUrl,
+       product_image_url: productImageUrl,
        result_url,
        fit_label: 'AI Gen Fit',
        recommended_size: 'Standard'
