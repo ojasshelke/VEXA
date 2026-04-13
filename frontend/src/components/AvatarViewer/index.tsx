@@ -31,6 +31,10 @@ class ErrorBoundary extends React.Component<
   static getDerivedStateFromError() {
     return { hasError: true };
   }
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // Log the error for observability (production: send to Sentry/DataDog)
+    console.error("AvatarModel Error Boundary caught an error:", error, errorInfo);
+  }
   render() {
     if (this.state.hasError) return this.props.fallback;
     return this.props.children;
