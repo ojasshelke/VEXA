@@ -3,7 +3,6 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { isRateLimited } from '@/lib/rateLimit';
-import { requireApiKey } from '@/lib/apiKeyMiddleware';
 import type { TryOnRequest } from '@/types';
 
 // CSRF & SSRF Safety: Only allow files from VEXA's official storage bucket
@@ -32,33 +31,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Too many requests. Please wait 60 seconds.' }, { status: 429 });
   }
 
-  // 1. Authenticate Request
-  // Check for specialized Marketplace API Key first
-  const { error: authError } = await requireApiKey(req);
+  // 1. Authenticate Request via User Session
+  const supabase = createRouteHandlerClient({ cookies });
+  const { data: { session } } = await supabase.auth.getSession();
   
-  // If no API Key, check for User Session (for internal frontend calls)
-  let sessionUser: any = null;
-  if (authError) {
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized: Valid Session or API Key required.' }, { status: 401 });
-    }
-    sessionUser = session.user;
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized: Valid Session required.' }, { status: 401 });
   }
+  const sessionUser = session.user;
 
   try {
     const body: TryOnRequest = await req.json();
     
-    // Identity Enforcement: User cannot trigger try-ons for others unless they have a service API Key
-    if (sessionUser && sessionUser.id !== body.userId) {
+    // Identity Enforcement: User cannot trigger try-ons for others
+    if (sessionUser.id !== body.userId) {
       return NextResponse.json({ error: 'Forbidden: You can only initiate try-ons for your own account.' }, { status: 403 });
     }
 
-    // Retrieve authenticated supabase client for the session
-    const supabaseClient = createRouteHandlerClient({ cookies });
-
-    const result = await handleTryOn(body, supabaseClient);
+    const result = await handleTryOn(body, supabase);
     return NextResponse.json(result, { status: 200 });
   } catch (error: unknown) {
     const err = error as Error;
@@ -108,13 +98,20 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
   // 3. Check cache
   const { data: cached } = await supabase
     .from('tryon_results')
-    .select('result_url')
+    .select('result_url, fit_label, recommended_size')
     .eq('user_id', userId)
     .eq('product_id', productId)
     .single();
   
   if (cached?.result_url) {
-    return { result_url: cached.result_url, cached: true };
+    const { data: signedData } = await supabase.storage.from('avatars').createSignedUrl(cached.result_url, 3600);
+    return { 
+      result_url: signedData?.signedUrl || cached.result_url, 
+      path: cached.result_url,
+      cached: true,
+      fit_label: cached.fit_label,
+      recommended_size: cached.recommended_size
+    };
   }
 
   // 4. API Logic
@@ -140,20 +137,22 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
   const arrayBuffer = await response.arrayBuffer();
   const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
 
+  const storagePath = `tryons/${fileName}`;
   const { error: uploadError } = await supabase.storage
     .from('avatars')
-    .upload(`tryons/${fileName}`, arrayBuffer, {
+    .upload(storagePath, arrayBuffer, {
       contentType: 'image/png',
       upsert: true
     });
 
   if (uploadError) throw new Error(`Asset Storage Error: ${uploadError.message}`);
 
-  const { data: publicUrlData } = supabase.storage
+  // Create ephemeral signed URL instead of permanent public URL (Fixes Privacy Risk)
+  const { data: signedData } = await supabase.storage
     .from('avatars')
-    .getPublicUrl(`tryons/${fileName}`);
+    .createSignedUrl(storagePath, 3600);
   
-  const result_url = publicUrlData.publicUrl;
+  const result_url = signedData?.signedUrl || '';
 
   // 5. Generate actual fit metadata
   let fit_label = 'True to size';
@@ -178,12 +177,12 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
        user_id: userId,
        product_id: productId,
        product_image_url: productImageUrl,
-       result_url,
+       result_url: storagePath, // Store secured path for generating future signed UI rendering
        fit_label,
        recommended_size
     });
     
   if (insertError) console.error("[/api/tryon] DB Sync Error:", insertError);
 
-  return { result_url, cached: false };
+  return { result_url, path: storagePath, cached: false, fit_label, recommended_size };
 }
