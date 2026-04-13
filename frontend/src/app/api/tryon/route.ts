@@ -11,9 +11,17 @@ const ALLOWED_STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 function validateSecureUrl(url: string, description: string): string {
   if (!url) return url;
-  if (ALLOWED_STORAGE_BUCKET && !url.startsWith(ALLOWED_STORAGE_BUCKET)) {
-    console.error(`[Security Warning] Blocked potential SSRF attempt. ${description} URL points to untrusted domain: ${url}`);
-    throw new Error(`Security Violation: The provided ${description} asset is not from an authorized source.`);
+  if (ALLOWED_STORAGE_BUCKET) {
+    try {
+      const parsedUrl = new URL(url);
+      const allowedOrigin = new URL(ALLOWED_STORAGE_BUCKET).origin;
+      if (parsedUrl.origin !== allowedOrigin) {
+        throw new Error('Origin mismatch');
+      }
+    } catch (error) {
+      console.error(`[Security Warning] Blocked potential SSRF attempt. ${description} URL points to untrusted domain: ${url}`);
+      throw new Error(`Security Violation: The provided ${description} asset is not from an authorized source.`);
+    }
   }
   return url;
 }
@@ -47,12 +55,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden: You can only initiate try-ons for your own account.' }, { status: 403 });
     }
 
-    // Initialize Service Client for the core logic (handling DB writes to protected tables)
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    const serviceClient = createClient(supabaseUrl, supabaseKey);
+    // Retrieve authenticated supabase client for the session
+    const supabaseClient = createRouteHandlerClient({ cookies });
 
-    const result = await handleTryOn(body, serviceClient);
+    const result = await handleTryOn(body, supabaseClient);
     return NextResponse.json(result, { status: 200 });
   } catch (error: unknown) {
     const err = error as Error;
@@ -74,11 +80,15 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
   // 1. Resolve Avatar URL (Fixes: Stored SSRF)
   const { data: user } = await supabase
     .from('users')
-    .select('avatar_url')
+    .select('*')
     .eq('id', userId)
     .single();
 
-  const rawAvatarUrl = user?.avatar_url || `${ALLOWED_STORAGE_BUCKET}/storage/v1/object/public/models/rp-character/model.glb`;
+  if (!user?.avatar_url) {
+    throw new Error(`Profile Validation: User ${userId} does not have a registered 3D avatar.`);
+  }
+
+  const rawAvatarUrl = user.avatar_url;
   const avatarUrl = validateSecureUrl(rawAvatarUrl, 'Avatar');
 
   // 2. Resolve Clothing URL (Fixes: Stored SSRF)
@@ -145,7 +155,23 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
   
   const result_url = publicUrlData.publicUrl;
 
-  // 5. Audit Log / Results
+  // 5. Generate actual fit metadata
+  let fit_label = 'True to size';
+  let recommended_size = 'M';
+  
+  const { data: sizeChart } = await supabase
+    .from('size_charts')
+    .select('*')
+    .eq('product_id', productId);
+    
+  if (user && sizeChart) {
+    const { getFitRecommendation } = await import('@/lib/fitEngine');
+    const recommendation = getFitRecommendation(user, sizeChart);
+    fit_label = recommendation.fitLabel;
+    recommended_size = recommendation.recommendedSize;
+  }
+
+  // 6. Audit Log / Results
   const { error: insertError } = await supabase
     .from('tryon_results')
     .insert({
@@ -153,8 +179,8 @@ export async function handleTryOn(body: TryOnRequest, supabase: SupabaseClient) 
        product_id: productId,
        product_image_url: productImageUrl,
        result_url,
-       fit_label: 'AI Gen Fit',
-       recommended_size: 'Standard'
+       fit_label,
+       recommended_size
     });
     
   if (insertError) console.error("[/api/tryon] DB Sync Error:", insertError);
