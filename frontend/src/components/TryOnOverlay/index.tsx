@@ -95,12 +95,45 @@ export function TryOnOverlay({
       {/* Expanded Panel */}
       {isExpanded && (
         <div className="border-t border-white/10 p-4 space-y-4">
-          {/* 3D Viewer */}
-          <AvatarViewer
-            glbUrl={status === 'ready' ? (result?.renderUrl ?? avatarGlbUrl) : avatarGlbUrl}
-            className="h-72"
-            showControls
-          />
+          {/* 3D Viewer or Result Image */}
+          <div className="relative h-72 w-full rounded-xl overflow-hidden border border-white/5 bg-black/20">
+            {status === 'ready' && result?.renderUrl ? (
+              <div className="relative w-full h-full group">
+                <img
+                  src={result.renderUrl}
+                  alt="Try-on Result"
+                  className="w-full h-full object-cover animate-in fade-in zoom-in duration-500"
+                />
+                <div className="absolute top-3 left-3 px-2 py-1 bg-[#bef264] text-black text-[10px] font-bold uppercase tracking-wider rounded flex items-center gap-1">
+                  <Activity className="w-3 h-3" />
+                  Your Fitting
+                </div>
+                {/* Visual Polishing Overlay */}
+                <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-xl" />
+              </div>
+            ) : (
+              <AvatarViewer
+                glbUrl={avatarGlbUrl}
+                className="h-full"
+                showControls={status === 'idle'}
+              />
+            )}
+            
+            {status === 'loading' && (
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                 <div className="flex flex-col items-center gap-3">
+                   <div className="relative">
+                     <div className="w-12 h-12 border-2 border-[#bef264]/20 border-t-[#bef264] rounded-full animate-spin" />
+                     <div className="absolute inset-0 flex items-center justify-center">
+                        <Shirt className="w-5 h-5 text-[#bef264] animate-pulse" />
+                     </div>
+                   </div>
+                   <p className="text-[#bef264] text-xs font-bold uppercase tracking-[0.2em]">Draping...</p>
+                 </div>
+              </div>
+            )}
+          </div>
+
 
           {/* Try-On Controls */}
           {status === 'idle' && (

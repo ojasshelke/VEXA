@@ -119,6 +119,10 @@ interface AvatarViewerProps {
   showControls?: boolean;
 }
 
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+
+// ... (AvatarModel, PlaceholderAvatar, CanvasLoader components stay same above)
+
 export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showControls = true }: AvatarViewerProps) {
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -146,7 +150,6 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
           .eq('id', currentUser.id)
           .single();
           
-        // Use user's avatar URL to render actual 3D files if uploaded
         if (data?.avatar_url && data.avatar_url.endsWith('.glb')) {
           setFinalGlbUrl(data.avatar_url);
         }
@@ -158,48 +161,49 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
 
   return (
     <div className={`relative w-full rounded-2xl overflow-hidden bg-black/40 border border-white/10 ${className}`}>
-      {/* R3F Canvas — always wrapped in Suspense per hard rules */}
-      <Suspense fallback={<CanvasLoader />}>
-        <Canvas
-          camera={{ position: [0, 1.0, 3.0 * zoom], fov: 50 }}
-          shadows
-          gl={{ antialias: true, alpha: true }}
-          className="w-full"
-          style={{ height: '100%' }}
-        >
-          <ambientLight intensity={0.5} />
-          <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
-          <pointLight position={[-5, 5, 5]} intensity={0.3} color="#bef264" />
+      <ErrorBoundary name="AvatarViewerCanvas">
+        <Suspense fallback={<CanvasLoader />}>
+          <Canvas
+            camera={{ position: [0, 1.0, 3.0 * zoom], fov: 50 }}
+            shadows
+            gl={{ antialias: true, alpha: true }}
+            className="w-full"
+            style={{ height: '100%' }}
+          >
+            <ambientLight intensity={0.5} />
+            <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
+            <pointLight position={[-5, 5, 5]} intensity={0.3} color="#bef264" />
 
-          <Environment preset={envPreset} />
+            <Environment preset={envPreset} />
 
-          <Suspense fallback={null}>
-            {finalGlbUrl ? (
-              <AvatarModel glbUrl={finalGlbUrl} />
-            ) : (
-              <PlaceholderAvatar />
-            )}
-          </Suspense>
+            <Suspense fallback={null}>
+              {finalGlbUrl ? (
+                <AvatarModel glbUrl={finalGlbUrl} />
+              ) : (
+                <PlaceholderAvatar />
+              )}
+            </Suspense>
 
-          <ContactShadows
-            opacity={0.4}
-            scale={2}
-            blur={2}
-            far={2}
-            position={[0, -0.05, 0]}
-          />
+            <ContactShadows
+              opacity={0.4}
+              scale={2}
+              blur={2}
+              far={2}
+              position={[0, -0.05, 0]}
+            />
 
-          <OrbitControls
-            autoRotate={isAutoRotate}
-            autoRotateSpeed={1.5}
-            enablePan={false}
-            minDistance={1.5}
-            maxDistance={8}
-            minPolarAngle={Math.PI / 8}
-            maxPolarAngle={Math.PI / 1.8}
-          />
-        </Canvas>
-      </Suspense>
+            <OrbitControls
+              autoRotate={isAutoRotate}
+              autoRotateSpeed={1.5}
+              enablePan={false}
+              minDistance={1.5}
+              maxDistance={8}
+              minPolarAngle={Math.PI / 8}
+              maxPolarAngle={Math.PI / 1.8}
+            />
+          </Canvas>
+        </Suspense>
+      </ErrorBoundary>
 
       {/* ── Overlay Controls ── */}
       {showControls && (
@@ -251,10 +255,11 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
 
       {/* No GLB badge */}
       {!finalGlbUrl && (
-        <div className="absolute top-4 left-4 px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-white/40 text-xs">
+        <div className="absolute top-4 left-4 px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-white/40 text-xs text-shimmer">
           Placeholder — generate your avatar first
         </div>
       )}
     </div>
   );
 }
+
