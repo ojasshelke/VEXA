@@ -1,4 +1,4 @@
-import type { ProductCategory } from '@/lib/fitEngine';
+import type { ProductCategory } from '@/types';
 
 /** Map storefront / outfit labels to sizing + try-on product category. */
 export function outfitLabelToProductCategory(label: string): ProductCategory {

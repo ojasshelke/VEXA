@@ -47,7 +47,7 @@ function AvatarModel({ glbUrl }: AvatarModelProps) {
 
 // ─── Placeholder Avatar (shown when no GLB is loaded) ─────────────────────────
 
-function PlaceholderAvatar() {
+function PlaceholderAvatar({ opacity = 1 }: { opacity?: number }) {
   const ref = useRef<Group>(null);
   useFrame((_, delta) => {
     if (ref.current) {
@@ -55,43 +55,49 @@ function PlaceholderAvatar() {
     }
   });
 
+  const materialProps = {
+    opacity,
+    transparent: opacity < 1,
+    roughness: 0.4,
+  };
+
   return (
     <group ref={ref}>
       {/* Stylized humanoid placeholder */}
       {/* Head */}
       <mesh position={[0, 1.65, 0]}>
         <sphereGeometry args={[0.15, 32, 32]} />
-        <meshStandardMaterial color="#bef264" roughness={0.3} metalness={0.1} />
+        <meshStandardMaterial color="#bef264" {...materialProps} roughness={0.3} metalness={0.1} />
       </mesh>
       {/* Torso */}
       <mesh position={[0, 1.1, 0]}>
         <boxGeometry args={[0.35, 0.55, 0.18]} />
-        <meshStandardMaterial color="#a3e635" roughness={0.4} />
+        <meshStandardMaterial color="#a3e635" {...materialProps} />
       </mesh>
       {/* Hips */}
       <mesh position={[0, 0.75, 0]}>
         <boxGeometry args={[0.32, 0.2, 0.18]} />
-        <meshStandardMaterial color="#84cc16" roughness={0.4} />
+        <meshStandardMaterial color="#84cc16" {...materialProps} />
       </mesh>
       {/* Left leg */}
       <mesh position={[-0.1, 0.3, 0]}>
         <boxGeometry args={[0.12, 0.55, 0.12]} />
-        <meshStandardMaterial color="#4d7c0f" roughness={0.5} />
+        <meshStandardMaterial color="#4d7c0f" {...materialProps} roughness={0.5} />
       </mesh>
       {/* Right leg */}
       <mesh position={[0.1, 0.3, 0]}>
         <boxGeometry args={[0.12, 0.55, 0.12]} />
-        <meshStandardMaterial color="#4d7c0f" roughness={0.5} />
+        <meshStandardMaterial color="#4d7c0f" {...materialProps} roughness={0.5} />
       </mesh>
       {/* Left arm */}
       <mesh position={[-0.26, 1.1, 0]} rotation={[0, 0, 0.3]}>
         <boxGeometry args={[0.1, 0.45, 0.1]} />
-        <meshStandardMaterial color="#65a30d" roughness={0.4} />
+        <meshStandardMaterial color="#65a30d" {...materialProps} />
       </mesh>
       {/* Right arm */}
       <mesh position={[0.26, 1.1, 0]} rotation={[0, 0, -0.3]}>
         <boxGeometry args={[0.1, 0.45, 0.1]} />
-        <meshStandardMaterial color="#65a30d" roughness={0.4} />
+        <meshStandardMaterial color="#65a30d" {...materialProps} />
       </mesh>
     </group>
   );
@@ -156,6 +162,12 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
     }
   }, [initialGlbUrl, currentUser]);
 
+  useEffect(() => {
+    if (finalGlbUrl) {
+      useGLTF.preload(finalGlbUrl);
+    }
+  }, [finalGlbUrl]);
+
   return (
     <div className={`relative w-full rounded-2xl overflow-hidden bg-black/40 border border-white/10 ${className}`}>
       {/* R3F Canvas — always wrapped in Suspense per hard rules */}
@@ -173,9 +185,9 @@ export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showContro
 
           <Environment preset={envPreset} />
 
-          <Suspense fallback={null}>
+          <Suspense fallback={<PlaceholderAvatar opacity={0.3} />}>
             {finalGlbUrl ? (
-              <AvatarModel glbUrl={finalGlbUrl} />
+              <AvatarModel key={finalGlbUrl} glbUrl={finalGlbUrl} />
             ) : (
               <PlaceholderAvatar />
             )}
