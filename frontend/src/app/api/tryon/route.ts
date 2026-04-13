@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
+import type { TryOnRequest } from '@/types';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
@@ -9,7 +10,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = await req.json();
+    const body: TryOnRequest = await req.json();
     const result = await handleTryOn(body);
     return NextResponse.json(result, { status: 200 });
   } catch (error: unknown) {
@@ -23,28 +24,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
  * Shared logic for initiating a try-on process.
  * Can be called internally by other API routes to avoid HTTP anti-patterns.
  */
-export async function handleTryOn(body: any) {
-  const { user_id, user_photo_url, product_image_url, product_id } = body;
+export async function handleTryOn(body: TryOnRequest, token?: string) {
+  const { userId, avatarGlbUrl, clothingGlbUrl, productId } = body;
 
-  if (!user_id || !user_photo_url || !product_image_url || !product_id) {
-    throw new Error('Missing required fields');
+  if (!userId || !avatarGlbUrl || !clothingGlbUrl || !productId) {
+    throw new Error('Missing required fields: userId, avatarGlbUrl, clothingGlbUrl, and productId are required.');
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseKey = token 
+    ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY 
+    : (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
   
   if (!supabaseUrl || !supabaseKey) {
     throw new Error('Supabase environment variables are missing');
   }
 
-  const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+  const supabase = createClient(supabaseUrl, supabaseKey, { 
+    auth: { persistSession: false },
+    global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+  });
 
   // 1. Check cache in tryon_results
   const { data: cached } = await supabase
     .from('tryon_results')
     .select('result_url')
-    .eq('user_id', user_id)
-    .eq('product_id', product_id)
+    .eq('user_id', userId)
+    .eq('product_id', productId)
     .single();
   
   if (cached?.result_url) {
@@ -65,8 +71,8 @@ export async function handleTryOn(body: any) {
     },
     body: JSON.stringify({
       inputs: {
-        human_img: user_photo_url,
-        garm_img: product_image_url
+        human_img: avatarGlbUrl,
+        garm_img: clothingGlbUrl
       }
     })
   });
@@ -79,7 +85,7 @@ export async function handleTryOn(body: any) {
   // Assumes Hugging Face returns an image directly
   const arrayBuffer = await response.arrayBuffer();
   
-  const fileName = `tryon_${user_id}_${product_id}_${Date.now()}.png`;
+  const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
 
   // Upload to Supabase Storage
   const { error: uploadError } = await supabase.storage
@@ -103,9 +109,9 @@ export async function handleTryOn(body: any) {
   const { error: insertError } = await supabase
     .from('tryon_results')
     .insert({
-       user_id,
-       product_id,
-       product_image_url,
+       user_id: userId,
+       product_id: productId,
+       product_image_url: clothingGlbUrl,
        result_url,
        fit_label: 'AI Gen Fit',
        recommended_size: 'Standard'

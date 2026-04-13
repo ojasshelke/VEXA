@@ -11,6 +11,7 @@
 
 import { useState, useCallback } from 'react';
 import type { TryOnResult } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 interface UseTryOnOptions {
   userId: string;
@@ -37,10 +38,14 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
       setState({ status: 'loading', result: null, error: null });
 
       try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
         const res = await fetch(`/api/tryon/${productId}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...(token && { 'Authorization': `Bearer ${token}` }),
           },
           body: JSON.stringify({
             userId: opts.userId,

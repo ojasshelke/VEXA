@@ -147,7 +147,7 @@ export default function ProductDetailPage() {
                   <TryOnOverlay 
                     userId={currentUser?.id || 'guest'}
                     productId={selectedOutfit?.id || ''}
-                    avatarGlbUrl={currentUser?.avatar_url || '/models/avatar.glb'}
+                    avatarGlbUrl={currentUser?.avatar_url || 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/rp-character/model.glb'}
                     clothingGlbUrl={glbUrl}
                   />
                 </div>
