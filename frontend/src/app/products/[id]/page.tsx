@@ -149,7 +149,6 @@ export default function ProductDetailPage() {
                     productId={selectedOutfit?.id || ''}
                     avatarGlbUrl={currentUser?.avatar_url || '/models/avatar.glb'}
                     clothingGlbUrl={glbUrl}
-                    apiKey="vx_dev_test_key_local"
                   />
                 </div>
               ) : (

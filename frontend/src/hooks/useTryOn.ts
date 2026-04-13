@@ -14,7 +14,6 @@ import type { TryOnResult } from '@/types';
 
 interface UseTryOnOptions {
   userId: string;
-  apiKey: string;
 }
 
 export interface UseTryOnState {
@@ -42,7 +41,6 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-vexa-key': opts.apiKey,
           },
           body: JSON.stringify({
             userId: opts.userId,
@@ -66,7 +64,7 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
         });
       }
     },
-    [opts.userId, opts.apiKey]
+    [opts.userId]
   );
 
   const reset = useCallback(() => {

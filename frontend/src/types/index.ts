@@ -78,6 +78,7 @@ export interface TryOnResult {
   };
   status: 'ready' | 'error';
   error?: string;
+  timestamp?: string;
 }
 
 // ─── Archetype / Morph Engine ────────────────────────────────────────────────

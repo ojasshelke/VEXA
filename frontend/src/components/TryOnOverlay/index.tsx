@@ -32,8 +32,6 @@ interface TryOnOverlayProps {
   avatarGlbUrl: string;
   /** Presigned clothing GLB URL (from marketplace product catalog) */
   clothingGlbUrl: string;
-  /** VEXA API key for the integrating marketplace */
-  apiKey: string;
   /** Product metadata for display */
   product?: {
     name: string;
@@ -49,12 +47,11 @@ export function TryOnOverlay({
   productId,
   avatarGlbUrl,
   clothingGlbUrl,
-  apiKey,
   product,
 }: TryOnOverlayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const { status, result, error, triggerTryOn, reset } = useTryOn({ userId, apiKey });
+  const { status, result, error, triggerTryOn, reset } = useTryOn({ userId });
 
   const handleTryOn = () => {
     triggerTryOn(productId, avatarGlbUrl, clothingGlbUrl);
