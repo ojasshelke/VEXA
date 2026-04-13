@@ -44,12 +44,26 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
   if (!avatarGlbUrl) return NextResponse.json({ error: 'avatarGlbUrl is required' }, { status: 400 });
   if (!clothingGlbUrl) return NextResponse.json({ error: 'clothingGlbUrl is required' }, { status: 400 });
 
-  // 2. Simulate try-on processing (Python service in production)
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // 2. Call /api/tryon to perform actual draping/try-on
+  const baseUrl = req.nextUrl.origin;
+  const tryOnResponse = await fetch(`${baseUrl}/api/tryon`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: userId,
+      user_photo_url: avatarGlbUrl,
+      product_image_url: clothingGlbUrl,
+      product_id: productId
+    })
+  });
 
-  // 3. Build signed render URL — in production this is output from Python service
-  const storagePath = tryOnStoragePath(userId, productId);
-  const renderUrl = await getSignedAvatarUrl(storagePath);
+  if (!tryOnResponse.ok) {
+    const errorText = await tryOnResponse.text();
+    return NextResponse.json({ error: `Try-on processing failed: ${errorText}` }, { status: tryOnResponse.status });
+  }
+
+  const tryOnData = await tryOnResponse.json();
+  const renderUrl = tryOnData.result_url;
 
   const result: TryOnResult = {
     id: `res_${Math.random().toString(36).substr(2, 9)}`,
@@ -58,7 +72,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     renderUrl,
     fitScore: Math.floor(Math.random() * 15) + 85, // 85–99
     sizeRecommendation: ['S', 'M', 'L', 'XL'][Math.floor(Math.random() * 4)],
-    heatmapUrl: renderUrl, // same stub; real heatmap from Python service
+    heatmapUrl: renderUrl, 
     status: 'ready',
   };
 

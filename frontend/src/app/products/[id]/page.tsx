@@ -5,6 +5,9 @@ import { useStore } from '@/store/useStore';
 import { useRouter } from 'next/navigation';
 import { ShoppingCart, Ruler, Box, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useClothingGlb } from '@/hooks/useClothingGlb';
+import { AvatarViewer } from '@/components/AvatarViewer';
+import { TryOnOverlay } from '@/components/TryOnOverlay';
 
 export default function ProductDetailPage() {
   const router = useRouter();
@@ -13,6 +16,12 @@ export default function ProductDetailPage() {
   const [fitLabel, setFitLabel] = useState<string | null>(null);
   const [recommendedSize, setRecommendedSize] = useState<string | null>(null);
   const [isSizeLoading, setIsSizeLoading] = useState(false);
+
+  const { glbUrl, isLoading: clothingLoading } = useClothingGlb(
+    selectedOutfit?.id, 
+    selectedOutfit?.imageUrl, 
+    'tops'
+  );
 
   useEffect(() => {
     if (!selectedOutfit) {
@@ -123,13 +132,35 @@ export default function ProductDetailPage() {
               )}
             </div>
 
-            {/* 3D Viewer Placeholder */}
-            <div className="glass-panel p-5 rounded-2xl flex flex-col items-center justify-center gap-3 relative overflow-hidden border border-white/10 border-dashed text-center min-h-[140px]">
-              <Box className="w-6 h-6 text-white/40" />
-              <div>
-                <p className="text-white font-medium text-sm">3D View Coming Soon</p>
-                <p className="text-white/40 text-xs mt-1">Interact with the garment in 360°</p>
-              </div>
+            {/* 3D Viewer & Try-On Logic */}
+            <div className="glass-panel p-5 rounded-2xl flex flex-col items-center justify-center gap-3 relative overflow-hidden border border-white/10 min-h-[140px]">
+              {clothingLoading ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-6 h-6 border-2 border-[#bef264]/30 border-t-[#bef264] rounded-full animate-spin" />
+                  <p className="text-white/40 text-xs">Generating 3D model...</p>
+                </div>
+              ) : glbUrl ? (
+                <div className="w-full flex flex-col gap-4">
+                  <div className="h-64 w-full rounded-xl overflow-hidden border border-white/5">
+                    <AvatarViewer glbUrl={glbUrl} className="h-full" />
+                  </div>
+                  <TryOnOverlay 
+                    userId={currentUser?.id || 'guest'}
+                    productId={selectedOutfit?.id || ''}
+                    avatarGlbUrl={currentUser?.avatar_url || '/models/avatar.glb'}
+                    clothingGlbUrl={glbUrl}
+                    apiKey="vx_dev_test_key_local"
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <Box className="w-6 h-6 text-white/40" />
+                  <div>
+                    <p className="text-white font-medium text-sm">3D View Unavailable</p>
+                    <p className="text-white/40 text-xs mt-1">Could not load garment model</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
