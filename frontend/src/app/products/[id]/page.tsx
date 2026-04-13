@@ -144,12 +144,20 @@ export default function ProductDetailPage() {
                   <div className="h-64 w-full rounded-xl overflow-hidden border border-white/5">
                     <AvatarViewer glbUrl={glbUrl} className="h-full" />
                   </div>
-                  <TryOnOverlay 
-                    userId={currentUser?.id || 'guest'}
-                    productId={selectedOutfit?.id || ''}
-                    avatarGlbUrl={currentUser?.avatar_url || 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/rp-character/model.glb'}
-                    clothingGlbUrl={glbUrl}
-                  />
+                  {currentUser?.id && selectedOutfit?.id ? (
+                    <TryOnOverlay 
+                      userId={currentUser.id}
+                      productId={selectedOutfit.id}
+                      avatarGlbUrl={currentUser.avatar_url || 'https://vazxmixjsiawhamofees.supabase.co/storage/v1/object/public/models/rp-character/model.glb'}
+                      clothingGlbUrl={glbUrl}
+                    />
+                  ) : (
+                    <div className="w-full p-4 rounded-xl bg-white/5 border border-white/10 text-center">
+                      <p className="text-white/60 text-sm">
+                        {currentUser ? 'Product data missing.' : 'Sign in to try this on your avatar.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-2 text-center">

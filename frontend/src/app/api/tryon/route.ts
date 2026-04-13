@@ -32,12 +32,10 @@ export async function handleTryOn(body: TryOnRequest, token?: string) {
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = token 
-    ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY 
-    : (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   
   if (!supabaseUrl || !supabaseKey) {
-    throw new Error('Supabase environment variables are missing');
+    throw new Error('Critical Configuration Error: Supabase logic requires SERVICE_ROLE_KEY for server-side operations.');
   }
 
   const supabase = createClient(supabaseUrl, supabaseKey, { 
