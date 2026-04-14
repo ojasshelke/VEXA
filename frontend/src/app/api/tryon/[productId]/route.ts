@@ -3,68 +3,96 @@
  * Drapes a clothing GLB over a user's avatar in the VEXA pipeline.
  * Returns a signed render URL + fit metadata.
  *
- * RULE: Auth required via x-vexa-key
- * RULE: No raw GLB paths returned
+ * RULE: Import handleTryOn directly — no internal HTTP calls
+ * RULE: Auth via Bearer token from request header
+ * RULE: No Math.random() for fitScore — use getFitScore
+ * RULE: No `any` types
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireApiKey } from '@/lib/apiKeyMiddleware';
-import { getSignedAvatarUrl, tryOnStoragePath } from '@/lib/avatarCache';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { handleTryOn } from '@/app/api/tryon/route';
+import { getFitScore } from '@/lib/fitEngine';
 import type { TryOnResult } from '@/types';
+import type { Database } from '@/types/database';
 
 interface RouteContext {
   params: Promise<{ productId: string }>;
 }
 
-export async function POST(req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
-  // 1. Auth
-  const { ctx, error: authError } = await requireApiKey(req);
-  if (authError) return authError;
+/** Shape returned by handleTryOn — explicit type, no `any` */
+interface TryOnData {
+  result_url: string;
+  storagePath: string;
+  cached: boolean;
+  fit_label: string;
+  recommended_size: string;
+  fit_score: number;
+}
 
+export async function POST(req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
   const { productId } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  // 1. Auth: validate Bearer token from request header
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return NextResponse.json({ error: 'Unauthorized: Bearer token required' }, { status: 401 });
   }
 
-  if (!body || typeof body !== 'object') {
-    return NextResponse.json({ error: 'Request body is required' }, { status: 400 });
+  const token = authHeader.split(' ')[1];
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
   }
 
-  const { userId, avatarGlbUrl, clothingGlbUrl } = body as {
-    userId?: string;
-    avatarGlbUrl?: string;
-    clothingGlbUrl?: string;
-  };
-
-  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 });
-  if (!avatarGlbUrl) return NextResponse.json({ error: 'avatarGlbUrl is required' }, { status: 400 });
-  if (!clothingGlbUrl) return NextResponse.json({ error: 'clothingGlbUrl is required' }, { status: 400 });
-
-  // 2. Simulate try-on processing (Python service in production)
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  // 3. Build signed render URL — in production this is output from Python service
-  const storagePath = tryOnStoragePath(userId, productId);
-  const renderUrl = await getSignedAvatarUrl(storagePath);
-
-  const result: TryOnResult = {
-    id: `res_${Math.random().toString(36).substr(2, 9)}`,
-    userId,
-    productId,
-    renderUrl,
-    fitScore: Math.floor(Math.random() * 15) + 85, // 85–99
-    sizeRecommendation: ['S', 'M', 'L', 'XL'][Math.floor(Math.random() * 4)],
-    heatmapUrl: renderUrl, // same stub; real heatmap from Python service
-    status: 'ready',
-  };
-
-  return NextResponse.json({
-    ...result,
-    marketplaceId: ctx.marketplaceId,
-    signedExpiry: new Date(Date.now() + 3600 * 1000).toISOString(),
+  // Verify the JWT token
+  const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
+
+  const { data: { user }, error: authError } = await authClient.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized: Invalid Bearer token' }, { status: 401 });
+  }
+
+  const userId = user.id;
+
+  // Service client for DB/storage operations
+  const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseServiceKey ?? supabaseAnonKey, {
+    auth: { persistSession: false },
+  });
+
+  try {
+    // 2. Import handleTryOn directly — no internal HTTP fetch
+    const tryOnData: TryOnData = await handleTryOn({ userId, productId }, supabase);
+
+    // 3. Use getFitScore — no Math.random()
+    const fitScore = getFitScore(tryOnData.fit_label);
+
+    // TODO: heatmapUrl — implement real heatmap generation from Python inference service
+    const heatmapUrl: string | null = null;
+
+    const result: TryOnResult = {
+      id: `res_${productId}_${userId}_${Date.now()}`,
+      userId,
+      productId,
+      renderUrl: tryOnData.result_url,
+      fitScore,
+      sizeRecommendation: tryOnData.recommended_size,
+      heatmapUrl: heatmapUrl ?? undefined,
+      status: 'ready',
+    };
+
+    return NextResponse.json({
+      ...result,
+      signedExpiry: new Date(Date.now() + 3600 * 1000).toISOString(),
+    });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error('[/api/tryon/[productId]] Error:', error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

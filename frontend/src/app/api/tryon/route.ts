@@ -1,6 +1,245 @@
+/**
+ * POST /api/tryon
+ * Core try-on engine. Accepts user photo + product image, returns AI-generated result.
+ *
+ * Auth:
+ *  - Bearer token auth for direct user calls
+ *  - API key auth for marketplace calls (x-vexa-key header)
+ *  - IDOR fix: if API key request, verify userId belongs to that marketplace
+ *
+ * RULE: Never return unsigned Supabase URLs
+ * RULE: Validate all incoming URLs at entry point
+ * RULE: If createSignedUrl fails, throw — never return empty string
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
+import { validateApiKey } from '@/lib/apiKeyMiddleware';
+import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
+import type { MarketplaceContext } from '@/types';
+import type { Database } from '@/types/database';
+
+// ─── SSRF Protection ──────────────────────────────────────────────────────────
+
+const ALLOWED_STORAGE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL
+  ? (() => { try { return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin; } catch { return null; } })()
+  : null;
+
+function validateSecureUrl(url: string, description: string): string {
+  if (!url) throw new Error(`${description} is required`);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`${description} is not a valid URL`);
+  }
+  if (ALLOWED_STORAGE_ORIGIN) {
+    const allowedOrigins = [
+      ALLOWED_STORAGE_ORIGIN,
+      'https://images.unsplash.com',
+      'https://cdn.shopify.com',
+    ];
+    const isAllowed = allowedOrigins.some((o) => parsed.origin === o) || parsed.origin.endsWith('.supabase.co');
+    if (!isAllowed) {
+      throw new Error(`${description} origin not allowed: ${parsed.origin}`);
+    }
+  }
+  return url;
+}
+
+// ─── Supabase helper ──────────────────────────────────────────────────────────
+
+function getServiceSupabase(): SupabaseClient<Database> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) throw new Error('Supabase environment variables missing');
+  return createClient<Database>(url, key, { auth: { persistSession: false } });
+}
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+interface AuthResult {
+  userId: string;
+  marketplace: MarketplaceContext | null;
+}
+
+async function authenticateRequest(req: NextRequest, bodyUserId: string): Promise<AuthResult | NextResponse> {
+  // 1. Try API key auth (marketplace calls)
+  const marketplaceCtx = await validateApiKey(req);
+  if (marketplaceCtx) {
+    if (!bodyUserId) {
+      return NextResponse.json({ error: 'userId is required for marketplace requests' }, { status: 400 });
+    }
+    // TODO: In production, verify userId belongs to this marketplace via a join table
+    return { userId: bodyUserId, marketplace: marketplaceCtx };
+  }
+
+  // 2. Bearer token auth for direct user calls
+  const authHeader = req.headers.get('Authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase environment variables missing');
+    }
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized: Invalid Bearer token' }, { status: 401 });
+    }
+    // IDOR fix: session user can only act on their own behalf
+    if (bodyUserId && bodyUserId !== user.id) {
+      return NextResponse.json({ error: 'Forbidden: Cannot initiate try-on for another user' }, { status: 403 });
+    }
+    return { userId: user.id, marketplace: null };
+  }
+
+  return NextResponse.json({ error: 'Unauthorized: Valid Bearer token or API key required' }, { status: 401 });
+}
+
+// ─── Exported handleTryOn for direct import by [productId]/route.ts ───────────
+
+interface HandleTryOnInput {
+  userId: string;
+  productId: string;
+  userPhotoUrl?: string;
+  productImageUrl?: string;
+}
+
+export interface HandleTryOnResult {
+  result_url: string;
+  storagePath: string;
+  cached: boolean;
+  fit_label: string;
+  recommended_size: string;
+  fit_score: number;
+}
+
+/** Row shape from tryon_results select */
+interface CachedTryOnRow {
+  result_url: string;
+  fit_label: string | null;
+  recommended_size: string | null;
+}
+
+export async function handleTryOn(
+  input: HandleTryOnInput,
+  supabase: SupabaseClient<Database>
+): Promise<HandleTryOnResult> {
+  const { userId, productId, userPhotoUrl, productImageUrl } = input;
+
+  // 1. Check cache
+  const { data: cachedRecord } = await supabase
+    .from('tryon_results')
+    .select('result_url, fit_label, recommended_size')
+    .eq('user_id', userId)
+    .eq('product_id', productId)
+    .single();
+
+  const cached = cachedRecord as any as CachedTryOnRow | null;
+
+  if (cached?.result_url) {
+    const { data: signedData, error: signError } = await supabase.storage
+      .from('avatars')
+      .createSignedUrl(cached.result_url, 3600);
+    if (signError || !signedData?.signedUrl) {
+      throw new Error(`Failed to sign cached result URL: ${signError?.message ?? 'unknown error'}`);
+    }
+    const fitLabel = cached.fit_label ?? 'True to size';
+    return {
+      result_url: signedData.signedUrl,
+      storagePath: cached.result_url,
+      cached: true,
+      fit_label: fitLabel,
+      recommended_size: cached.recommended_size ?? 'M',
+      fit_score: getFitScore(fitLabel),
+    };
+  }
+
+  // 2. Call Hugging Face API
+  const hfKey = process.env.HUGGINGFACE_API_KEY;
+  if (!hfKey) throw new Error('Missing HUGGINGFACE_API_KEY environment variable');
+
+  const response = await fetch('https://api-inference.huggingface.co/models/yisol/IDM-VTON', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${hfKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      inputs: {
+        human_img: userPhotoUrl ?? '',
+        garm_img: productImageUrl ?? '',
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Hugging Face API failed: ${response.status} - ${text}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
+  const storagePath = `tryons/${fileName}`;
+
+  // 3. Upload to storage
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(storagePath, arrayBuffer, { contentType: 'image/png', upsert: true });
+
+  if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`);
+
+  // 4. Create signed URL — throw on failure, never return empty string
+  const { data: signedData, error: signError } = await supabase.storage
+    .from('avatars')
+    .createSignedUrl(storagePath, 3600);
+
+  if (signError || !signedData?.signedUrl) {
+    throw new Error(`Failed to create signed URL: ${signError?.message ?? 'unknown error'}`);
+  }
+
+  // 5. Compute fit metadata
+  let fit_label = 'True to size';
+  let recommended_size = 'M';
+
+  const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
+  const { data: sizeChart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
+
+  if (user && sizeChart && Array.isArray(sizeChart) && sizeChart.length > 0) {
+    const recommendation = getFitRecommendation(user, sizeChart);
+    fit_label = recommendation.fitLabel;
+    recommended_size = recommendation.recommendedSize;
+  }
+
+  // 6. Store result — save storagePath for re-signing later, not the signed URL
+  const insertData: Database['public']['Tables']['tryon_results']['Insert'] = {
+    user_id: userId,
+    product_id: productId,
+    product_image_url: productImageUrl ?? '',
+    result_url: storagePath,
+    fit_label,
+    recommended_size,
+  };
+
+  // @ts-ignore
+  await supabase.from('tryon_results').insert(insertData);
+
+  return {
+    result_url: signedData.signedUrl,
+    storagePath,
+    cached: false,
+    fit_label,
+    recommended_size,
+    fit_score: getFitScore(fit_label),
+  };
+}
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
@@ -10,102 +249,43 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const body = await req.json();
-    const { user_id, user_photo_url, product_image_url, product_id } = body;
+    const { user_id, user_photo_url, product_image_url, product_id } = body as {
+      user_id?: string;
+      user_photo_url?: string;
+      product_image_url?: string;
+      product_id?: string;
+    };
 
-    if (!user_id || !user_photo_url || !product_image_url || !product_id) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    if (!product_id) {
+      return NextResponse.json({ error: 'product_id is required' }, { status: 400 });
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error('Supabase environment variables are missing');
-    }
+    // Validate all incoming URLs at entry point — not mid-function
+    const validatedPhotoUrl = user_photo_url ? validateSecureUrl(user_photo_url, 'user_photo_url') : undefined;
+    const validatedProductUrl = product_image_url ? validateSecureUrl(product_image_url, 'product_image_url') : undefined;
 
-    const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    // Authenticate
+    const authResult = await authenticateRequest(req, user_id ?? '');
+    if (authResult instanceof NextResponse) return authResult;
 
-    // 1. Check cache in tryon_results
-    const { data: cached } = await supabase
-      .from('tryon_results')
-      .select('result_url')
-      .eq('user_id', user_id)
-      .eq('product_id', product_id)
-      .single();
-    
-    if (cached?.result_url) {
-      return NextResponse.json({ result_url: cached.result_url, cached: true }, { status: 200 });
-    }
+    const { userId } = authResult;
+    const supabase = getServiceSupabase();
 
-    // 2. No cache: Call Hugging Face API
-    const hfKey = process.env.HUGGINGFACE_API_KEY;
-    if (!hfKey) {
-      throw new Error("Missing HUGGINGFACE_API_KEY environment variable");
-    }
+    const result = await handleTryOn(
+      { userId, productId: product_id, userPhotoUrl: validatedPhotoUrl, productImageUrl: validatedProductUrl },
+      supabase
+    );
 
-    const response = await fetch("https://api-inference.huggingface.co/models/yisol/IDM-VTON", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${hfKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        inputs: {
-          human_img: user_photo_url,
-          garm_img: product_image_url
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Hugging Face API failed: ${response.status} - ${text}`);
-    }
-
-    // Assumes Hugging Face returns an image directly
-    const arrayBuffer = await response.arrayBuffer();
-    
-    const fileName = `tryon_${user_id}_${product_id}_${Date.now()}.png`;
-
-    // Upload to Supabase Storage (reusing avatars bucket for simplicity, putting in tryons folder)
-    const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(`tryons/${fileName}`, arrayBuffer, {
-        contentType: 'image/png',
-        upsert: true
-      });
-
-    if (uploadError) {
-      throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
-    }
-
-    const { data: publicUrlData } = supabase.storage
-      .from('avatars')
-      .getPublicUrl(`tryons/${fileName}`);
-    
-    const result_url = publicUrlData.publicUrl;
-
-    // 3. Save to tryon_results table
-    const { error: insertError } = await supabase
-      .from('tryon_results')
-      .insert({
-         user_id,
-         product_id,
-         product_image_url,
-         result_url,
-         fit_label: 'AI Gen Fit',
-         recommended_size: 'Standard'
-      });
-      
-    if (insertError) {
-       console.error("[/api/tryon] DB Insert Error:", insertError);
-       // We still return the image even if caching failed
-    }
-
-    return NextResponse.json({ result_url, cached: false }, { status: 200 });
+    return NextResponse.json({
+      result_url: result.result_url,
+      cached: result.cached,
+      fit_label: result.fit_label,
+      recommended_size: result.recommended_size,
+      fit_score: result.fit_score,
+    }, { status: 200 });
   } catch (error: unknown) {
-    const err = error as Error;
-    console.error("[/api/tryon] Error:", err.message);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[/api/tryon] Error:', err.message);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

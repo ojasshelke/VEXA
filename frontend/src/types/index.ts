@@ -142,10 +142,45 @@ export interface AvatarReadyWebhook {
 
 // ─── Legacy (kept for existing try-on studio) ────────────────────────────────
 
+export type ClothingCategory = 'tops' | 'bottoms' | 'dresses' | 'outerwear' | 'shoes' | 'accessories';
+
 export interface Outfit {
   id: string;
   name: string;
   price: number;
   imageUrl: string;
   category: string;
+}
+
+export interface ClothingGlbApiResponse {
+  glb_url?: string;
+  cached?: boolean;
+  error?: string;
+}
+
+// ─── Direct API (Restoring Missing Types) ───────────────────────────────────
+
+export interface ARSessionRequestBody {
+  user_id: string;
+  product_id: string;
+}
+
+export interface ARSessionResponse {
+  session_token: string;
+  message?: string;
+}
+
+export interface VideoTryOnStartResponse {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+
+export interface VideoJobStatusResponse {
+  status: VideoJobStatus;
+  progress_percent: number;
+  result_video_url: string | null;
+  error_message: string | null;
 }

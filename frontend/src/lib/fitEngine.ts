@@ -1,5 +1,8 @@
 import type { UserRow, SizeChartRow } from '@/types/database';
 
+/** Product categories for sizing + try-on logic */
+export type ProductCategory = 'clothing' | 'shoes' | 'hats' | 'jewelry' | 'bags';
+
 export interface FitRecommendation {
   fitLabel: "Oversized" | "True to size" | "Too tight";
   recommendedSize: string;
@@ -45,4 +48,21 @@ export function getFitRecommendation(userMeasurements: Partial<UserRow>, sizeCha
   }
 
   return { fitLabel: bestFitLabel, recommendedSize: bestSize };
+}
+
+/**
+ * Deterministic fit score from a fit label.
+ * No randomness — score is fully reproducible.
+ */
+export function getFitScore(fitLabel: string): number {
+  switch (fitLabel) {
+    case 'True to size':
+      return 95;
+    case 'Oversized':
+      return 80;
+    case 'Too tight':
+      return 70;
+    default:
+      return 80;
+  }
 }

@@ -8,15 +8,14 @@
  * RULE: Always wrap R3F canvas in <Suspense fallback={...}>
  * RULE: "use client" — R3F requires client context
  * RULE: No raw GLB paths — consumer must pass signed URLs
+ * RULE: No direct Supabase client inside components — parent fetches and passes avatarUrl
  */
 
-import React, { Suspense, useRef, useState, useEffect } from 'react';
+import React, { Suspense, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, ContactShadows, Center } from '@react-three/drei';
 import type { Group } from 'three';
 import { RotateCcw, ZoomIn, ZoomOut, Sun } from 'lucide-react';
-import { useStore } from '@/store/useStore';
-import { createClient } from '@supabase/supabase-js';
 
 // ─── Error Boundary (Declarative Error Handling) ─────────────────────────────
 
@@ -137,47 +136,21 @@ function CanvasLoader() {
 // ─── Main AvatarViewer Export ─────────────────────────────────────────────────
 
 interface AvatarViewerProps {
+  /** Signed avatar URL — parent fetches from /api/avatar/[userId] and passes it down */
+  avatarUrl?: string | null;
+  /** Legacy prop alias */
   glbUrl?: string | null;
   className?: string;
   showControls?: boolean;
 }
 
-export function AvatarViewer({ glbUrl: initialGlbUrl, className = '', showControls = true }: AvatarViewerProps) {
+export function AvatarViewer({ avatarUrl, glbUrl, className = '', showControls = true }: AvatarViewerProps) {
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [envPreset, setEnvPreset] = useState<'city' | 'studio' | 'sunset'>('city');
 
-  const { currentUser } = useStore();
-  const [finalGlbUrl, setFinalGlbUrl] = useState<string | null>(initialGlbUrl || null);
-
-  useEffect(() => {
-    if (initialGlbUrl) {
-      setFinalGlbUrl(initialGlbUrl);
-      return;
-    }
-
-    if (currentUser?.id) {
-      const fetchAvatar = async () => {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-        if (!supabaseUrl || !supabaseKey) return;
-        
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const { data } = await supabase
-          .from('users')
-          .select('avatar_url')
-          .eq('id', currentUser.id)
-          .single();
-          
-        // Use user's avatar URL to render actual 3D files if uploaded
-        if (data?.avatar_url && data.avatar_url.endsWith('.glb')) {
-          setFinalGlbUrl(data.avatar_url);
-        }
-      };
-      
-      fetchAvatar();
-    }
-  }, [initialGlbUrl, currentUser]);
+  // avatarUrl takes precedence, then glbUrl (legacy compat)
+  const finalGlbUrl = avatarUrl || glbUrl || null;
 
   return (
     <div className={`relative w-full rounded-2xl overflow-hidden bg-black/40 border border-white/10 ${className}`}>
