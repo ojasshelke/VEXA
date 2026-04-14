@@ -4,10 +4,10 @@ import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { user_id } = await req.json();
+    const { userId } = await req.json();
 
-    if (!user_id) {
-      return NextResponse.json({ error: 'user_id is required' }, { status: 400 });
+    if (!userId) {
+      return NextResponse.json({ error: 'userId is required' }, { status: 400 });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -18,7 +18,7 @@ export async function DELETE(req: NextRequest) {
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('avatar_url')
-      .eq('id', user_id)
+      .eq('id', userId)
       .single();
 
     if (userError || !user) {
@@ -51,17 +51,17 @@ export async function DELETE(req: NextRequest) {
     }
 
     // 3. Delete all tryon_results
-    await supabase.from('tryon_results').delete().eq('user_id', user_id);
+    await supabase.from('tryon_results').delete().eq('user_id', userId);
 
     // 4. Delete user record
-    const { error: deleteError } = await supabase.from('users').delete().eq('id', user_id);
+    const { error: deleteError } = await supabase.from('users').delete().eq('id', userId);
 
     if (deleteError) {
       throw deleteError;
     }
 
     // 5. Delete Supabase Auth User
-    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(user_id);
+    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
     if (authDeleteError) {
       console.warn('GDPR: Failed to delete auth user, might require manual cleanup', authDeleteError.message);
     }

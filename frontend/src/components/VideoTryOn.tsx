@@ -34,14 +34,14 @@ function parseVideoJobStatus(value: unknown): VideoJobStatusResponse | null {
   if (status !== 'processing' && status !== 'completed' && status !== 'failed') {
     return null;
   }
-  const progress = value.progress_percent;
+  const progress = value.progressPercent;
   return {
     status,
-    progress_percent: typeof progress === 'number' ? progress : 0,
-    result_video_url:
-      typeof value.result_video_url === 'string' ? value.result_video_url : null,
-    error_message:
-      typeof value.error_message === 'string' ? value.error_message : null,
+    progressPercent: typeof progress === 'number' ? progress : 0,
+    resultVideoUrl:
+      typeof value.resultVideoUrl === 'string' ? value.resultVideoUrl : null,
+    errorMessage:
+      typeof value.errorMessage === 'string' ? value.errorMessage : null,
   };
 }
 
@@ -73,7 +73,7 @@ export function VideoTryOn({ product }: VideoTryOnProps) {
     async (jobId: string): Promise<boolean> => {
       try {
         const res = await fetch(
-          `/api/tryon/video/status?job_id=${encodeURIComponent(jobId)}`
+          `/api/tryon/video/status?jobId=${encodeURIComponent(jobId)}`
         );
         const raw: unknown = await res.json();
         if (!res.ok) {
@@ -88,17 +88,17 @@ export function VideoTryOn({ product }: VideoTryOnProps) {
           throw new Error('Invalid status payload');
         }
 
-        setProgress(data.progress_percent);
+        setProgress(data.progressPercent);
 
-        if (data.status === 'completed' && data.result_video_url) {
+        if (data.status === 'completed' && data.resultVideoUrl) {
           stopPolling();
-          setResultUrl(data.result_video_url);
+          setResultUrl(data.resultVideoUrl);
           setStatus('done');
           return false;
         }
         if (data.status === 'failed') {
           stopPolling();
-          setErrorMsg(data.error_message ?? 'Processing failed');
+          setErrorMsg(data.errorMessage ?? 'Processing failed');
           setStatus('error');
           return false;
         }
@@ -173,10 +173,10 @@ export function VideoTryOn({ product }: VideoTryOnProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: currentUser.id,
-          video_url: uploadData.url,
-          product_image_url: product.imageUrl,
-          product_id: product.id,
+          userId: currentUser.id,
+          videoUrl: uploadData.url,
+          productImageUrl: product.imageUrl,
+          productId: product.id,
         }),
       });
 
@@ -190,14 +190,14 @@ export function VideoTryOn({ product }: VideoTryOnProps) {
       }
 
       const jobOk = jobRaw as VideoTryOnStartResponse;
-      if (!jobOk.job_id) {
+      if (!jobOk.jobId) {
         throw new Error('Failed to start job');
       }
 
-      const keepPolling = await pollStatus(jobOk.job_id);
+      const keepPolling = await pollStatus(jobOk.jobId);
       if (keepPolling) {
         pollTimerRef.current = setInterval(() => {
-          void pollStatus(jobOk.job_id).then((cont) => {
+          void pollStatus(jobOk.jobId).then((cont) => {
             if (!cont && pollTimerRef.current) {
               clearInterval(pollTimerRef.current);
               pollTimerRef.current = null;

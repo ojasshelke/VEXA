@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { ClothingCategory } from '@/types';
+import type { ProductCategory } from '@/types';
 
 const MESHY_API_BASE = 'https://api.meshy.ai/openapi/v1';
 
@@ -16,21 +16,25 @@ function getSupabase(): SupabaseClient {
 }
 
 interface ClothingRequestBody {
-  product_id: string;
-  product_image_url: string;
-  category: ClothingCategory;
+  productId: string;
+  productImageUrl: string;
+  category: ProductCategory;
 }
 
-const ALLOWED_CATEGORIES: readonly ClothingCategory[] = [
+const ALLOWED_CATEGORIES: readonly ProductCategory[] = [
+  'clothing',
+  'shoes',
+  'hats',
+  'jewelry',
+  'bags',
   'tops',
   'bottoms',
   'dresses',
   'outerwear',
-  'shoes',
   'accessories',
 ];
 
-function isClothingCategory(value: string): value is ClothingCategory {
+function isProductCategory(value: string): value is ProductCategory {
   return (ALLOWED_CATEGORIES as readonly string[]).includes(value);
 }
 
@@ -46,7 +50,7 @@ interface MeshyTaskResponse {
 }
 
 interface ClothingApiSuccess {
-  glb_url: string;
+  glbUrl: string;
   cached: boolean;
 }
 
@@ -57,14 +61,14 @@ interface ClothingApiError {
 function parseRequestBody(raw: unknown): ClothingRequestBody | null {
   if (raw === null || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const product_id = o.product_id;
-  const product_image_url = o.product_image_url;
+  const productId = o.productId;
+  const productImageUrl = o.productImageUrl;
   const category = o.category;
-  if (typeof product_id !== 'string' || product_id.length === 0) return null;
-  if (typeof product_image_url !== 'string' || product_image_url.length === 0)
+  if (typeof productId !== 'string' || productId.length === 0) return null;
+  if (typeof productImageUrl !== 'string' || productImageUrl.length === 0)
     return null;
-  if (typeof category !== 'string' || !isClothingCategory(category)) return null;
-  return { product_id, product_image_url, category };
+  if (typeof category !== 'string' || !isProductCategory(category)) return null;
+  return { productId, productImageUrl, category };
 }
 
 export async function POST(
@@ -86,17 +90,17 @@ export async function POST(
       );
     }
 
-    const { product_id, product_image_url, category } = body;
+    const { productId, productImageUrl, category } = body;
     const supabase = getSupabase();
 
     const { data: cached } = await supabase
       .from('clothing_assets')
       .select('glb_url')
-      .eq('product_id', product_id)
+      .eq('product_id', productId)
       .maybeSingle();
 
     if (cached?.glb_url) {
-      return NextResponse.json({ glb_url: cached.glb_url, cached: true });
+      return NextResponse.json({ glbUrl: cached.glb_url, cached: true });
     }
 
     const meshyKey = process.env.MESHY_API_KEY;
@@ -114,7 +118,7 @@ export async function POST(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        image_url: product_image_url,
+        image_url: productImageUrl,
         enable_pbr: true,
         should_texture: true,
         should_remesh: true,
@@ -171,8 +175,8 @@ export async function POST(
 
     const { error: upsertError } = await supabase.from('clothing_assets').upsert(
       {
-        product_id,
-        product_image_url,
+        product_id: productId,
+        product_image_url: productImageUrl,
         glb_url: glbUrl,
         category,
       },
@@ -183,7 +187,7 @@ export async function POST(
       console.error('[/api/clothing] Supabase upsert:', upsertError.message);
     }
 
-    return NextResponse.json({ glb_url: glbUrl, cached: false });
+    return NextResponse.json({ glbUrl, cached: false });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[/api/clothing]', message);

@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function GET(req: NextRequest) {
   try {
-    const marketplace_key = req.nextUrl.searchParams.get('marketplace_key');
+    const marketplaceKey = req.nextUrl.searchParams.get('marketplaceKey');
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -32,9 +32,9 @@ export async function GET(req: NextRequest) {
       .select('id, product_id, created_at')
       .gte('created_at', dateLimit);
 
-    if (marketplace_key) {
+    if (marketplaceKey) {
       // Need to find api_key_id first
-      const { data: keyRecord } = await supabase.from('api_keys').select('id').eq('key', marketplace_key).single();
+      const { data: keyRecord } = await supabase.from('api_keys').select('id').eq('key', marketplaceKey).single();
       if (keyRecord) {
         usageQuery = usageQuery.eq('api_key_id', keyRecord.id);
         // Note: For try_on if we had marketplace_id we'd filter, but skipping for now or assume filtering.

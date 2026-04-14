@@ -5,10 +5,10 @@ import { getFitRecommendation } from '@/lib/fitEngine';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { user_id, product_id } = body;
+    const { userId, productId } = body;
 
-    if (!user_id || !product_id) {
-      return NextResponse.json({ error: 'Missing user_id or product_id' }, { status: 400 });
+    if (!userId || !productId) {
+      return NextResponse.json({ error: 'Missing userId or productId' }, { status: 400 });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('*')
-      .eq('id', user_id)
+      .eq('id', userId)
       .single();
 
     if (userError || !user) {
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     const { data: sizeChart, error: sizeError } = await supabase
       .from('size_charts')
       .select('*')
-      .eq('product_id', product_id);
+      .eq('product_id', productId);
 
     if (sizeError) {
       console.error("[/api/size] Error fetching size chart:", sizeError.message);

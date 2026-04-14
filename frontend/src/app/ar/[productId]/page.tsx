@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { ARTryOn } from '@/components/ARTryOn';
 import { useStore } from '@/store/useStore';
 import { outfitLabelToClothingCategory } from '@/lib/clothingCategory';
-import type { ARSessionRequestBody, ClothingCategory, ClothingGlbApiResponse } from '@/types';
+import type { ARSessionRequestBody, ProductCategory, ClothingGlbApiResponse } from '@/types';
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=400';
@@ -15,7 +15,7 @@ function parseClothingResponse(raw: unknown): ClothingGlbApiResponse | null {
   if (raw === null || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   return {
-    glb_url: typeof o.glb_url === 'string' ? o.glb_url : undefined,
+    glbUrl: typeof o.glbUrl === 'string' ? o.glbUrl : undefined,
     cached: typeof o.cached === 'boolean' ? o.cached : undefined,
     error: typeof o.error === 'string' ? o.error : undefined,
   };
@@ -51,7 +51,7 @@ function ARPageInner() {
 
     const imageUrl = searchParams.get('imageUrl') ?? FALLBACK_IMAGE;
     const categoryRaw = searchParams.get('category') ?? 'tops';
-    const category: ClothingCategory = outfitLabelToClothingCategory(categoryRaw);
+    const category = outfitLabelToClothingCategory(categoryRaw);
 
     const load = async () => {
       try {
@@ -59,8 +59,8 @@ function ARPageInner() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            product_id: productId,
-            product_image_url: imageUrl,
+            productId: productId,
+            productImageUrl: imageUrl,
             category,
           }),
         });
@@ -69,15 +69,15 @@ function ARPageInner() {
         if (!res.ok) {
           throw new Error(data?.error ?? 'Failed to load clothing');
         }
-        if (!data?.glb_url) {
+        if (!data?.glbUrl) {
           throw new Error('No clothing GLB URL returned');
         }
-        setClothingGlbUrl(data.glb_url);
+        setClothingGlbUrl(data.glbUrl);
 
         if (currentUser?.id) {
           const body: ARSessionRequestBody = {
-            user_id: currentUser.id,
-            product_id: productId,
+            userId: currentUser.id,
+            productId: productId,
           };
           const logRes = await fetch('/api/ar/session', {
             method: 'POST',

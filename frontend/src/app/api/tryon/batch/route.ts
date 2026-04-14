@@ -10,9 +10,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const body = await req.json();
-    const { user_id, user_photo_url, products } = body;
+    const { userId, userPhotoUrl, products } = body;
 
-    if (!user_id || !user_photo_url || !products || !Array.isArray(products)) {
+    if (!userId || !userPhotoUrl || !products || !Array.isArray(products)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -23,24 +23,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const results = [];
 
     for (const product of products) {
-      const { product_id, product_image_url } = product;
+      const { productId, productImageUrl } = product;
 
       // 1. Check cache
       const { data: cached } = await supabase
         .from('tryon_results')
         .select('result_url')
-        .eq('user_id', user_id)
-        .eq('product_id', product_id)
+        .eq('user_id', userId)
+        .eq('product_id', productId)
         .single();
 
       if (cached?.result_url) {
-        results.push({ product_id, result_url: cached.result_url, cached: true });
+        results.push({ productId, resultUrl: cached.result_url, cached: true });
         continue;
       }
 
-      // 2. Not cached: Call our own tryon API to reuse logic (via direct fetch if we can, 
-      // but NextJS absolute fetch to itself during request is tricky. 
-      // Let's replicate core HF call here to avoid self-fetch complexities.
       try {
         const hfKey = process.env.HUGGINGFACE_API_KEY;
         if (!hfKey) throw new Error("Missing HUGGINGFACE_API_KEY");
@@ -53,8 +50,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           },
           body: JSON.stringify({
             inputs: {
-              human_img: user_photo_url,
-              garm_img: product_image_url
+              human_img: userPhotoUrl,
+              garm_img: productImageUrl
             }
           })
         });
@@ -65,7 +62,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        const fileName = `tryon_${user_id}_${product_id}_${Date.now()}.png`;
+        const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
 
         const { error: uploadError } = await supabase.storage
           .from('avatars')
@@ -80,23 +77,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .from('avatars')
           .getPublicUrl(`tryons/${fileName}`);
 
-        const result_url = publicUrlData.publicUrl;
+        const resultUrl = publicUrlData.publicUrl;
 
         await supabase.from('tryon_results').insert({
-          user_id,
-          product_id,
-          product_image_url,
-          result_url,
+          user_id: userId,
+          product_id: productId,
+          product_image_url: productImageUrl,
+          result_url: resultUrl,
           fit_label: 'AI Gen Fit',
           recommended_size: 'Standard'
         });
 
-        results.push({ product_id, result_url, cached: false });
+        results.push({ productId, resultUrl, cached: false });
       } catch (e: unknown) {
         const err = e as Error;
-        console.error(`Batch tryon failed for ${product_id}:`, err);
-        // Skip or push error
-        // Let's not fail the whole batch, just skip this product or push null
+        console.error(`Batch tryon failed for ${productId}:`, err);
       }
     }
 

@@ -13,25 +13,25 @@ function getSupabase(): SupabaseClient {
 }
 
 interface VideoTryOnRequestBody {
-  user_id: string;
-  video_url: string;
-  product_image_url: string;
-  product_id: string;
+  userId: string;
+  videoUrl: string;
+  productImageUrl: string;
+  productId: string;
 }
 
 function parseVideoBody(raw: unknown): VideoTryOnRequestBody | null {
   if (raw === null || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const user_id = o.user_id;
-  const video_url = o.video_url;
-  const product_image_url = o.product_image_url;
-  const product_id = o.product_id;
-  if (typeof user_id !== 'string' || user_id.length === 0) return null;
-  if (typeof video_url !== 'string' || video_url.length === 0) return null;
-  if (typeof product_image_url !== 'string' || product_image_url.length === 0)
+  const userId = o.userId;
+  const videoUrl = o.videoUrl;
+  const productImageUrl = o.productImageUrl;
+  const productId = o.productId;
+  if (typeof userId !== 'string' || userId.length === 0) return null;
+  if (typeof videoUrl !== 'string' || videoUrl.length === 0) return null;
+  if (typeof productImageUrl !== 'string' || productImageUrl.length === 0)
     return null;
-  if (typeof product_id !== 'string' || product_id.length === 0) return null;
-  return { user_id, video_url, product_image_url, product_id };
+  if (typeof productId !== 'string' || productId.length === 0) return null;
+  return { userId, videoUrl, productImageUrl, productId };
 }
 
 interface VideoJobInsertRow {
@@ -52,16 +52,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const { user_id, video_url, product_image_url, product_id } = body;
+    const { userId, videoUrl, productImageUrl, productId } = body;
     const supabase = getSupabase();
 
     const { data: job, error: insertError } = await supabase
       .from('video_jobs')
       .insert({
-        user_id,
-        product_id,
-        input_video_url: video_url,
-        product_image_url,
+        user_id: userId,
+        product_id: productId,
+        input_video_url: videoUrl,
+        product_image_url: productImageUrl,
         status: 'processing',
         progress_percent: 0,
       })
@@ -81,8 +81,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           job_id: row.id,
-          video_url,
-          garment_image_url: product_image_url,
+          video_url: videoUrl,
+          garment_image_url: productImageUrl,
         }),
       }).catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const payload: VideoTryOnStartResponse = {
-      job_id: row.id,
+      jobId: row.id,
       status: 'processing',
       message:
         'Video try-on started. Poll /api/tryon/video/status for progress.',

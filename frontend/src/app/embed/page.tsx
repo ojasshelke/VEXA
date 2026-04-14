@@ -7,9 +7,9 @@ import { Camera, Zap, AlertCircle } from 'lucide-react';
 
 function EmbedContent() {
   const searchParams = useSearchParams();
-  const productId = searchParams.get('product_id');
-  const productImage = searchParams.get('product_image_url');
-  const marketplaceKey = searchParams.get('marketplace_key');
+  const productId = searchParams.get('productId');
+  const productImageUrl = searchParams.get('productImageUrl');
+  const marketplaceKey = searchParams.get('marketplaceKey');
 
   const { currentUser, userPhotoUrl } = useStore();
   
@@ -52,7 +52,7 @@ function EmbedContent() {
 
   useEffect(() => {
     // 2. Run Try-On if valid & user exists
-    if (!isValid || !currentUser?.id || !userPhotoUrl || !productId || !productImage) return;
+    if (!isValid || !currentUser?.id || !userPhotoUrl || !productId || !productImageUrl) return;
 
     const runTryOn = async () => {
       setTryOnStatus('loading');
@@ -64,10 +64,10 @@ function EmbedContent() {
             "x-vexa-key": marketplaceKey! // pass key to pass middleware checks safely
           },
           body: JSON.stringify({
-            user_id: currentUser.id,
-            user_photo_url: userPhotoUrl,
-            product_image_url: productImage,
-            product_id: productId
+            userId: currentUser.id,
+            userPhotoUrl: userPhotoUrl,
+            productImageUrl: productImageUrl,
+            productId: productId
           })
         });
 
@@ -77,7 +77,7 @@ function EmbedContent() {
         }
 
         const data = await res.json();
-        setResultImage(data.result_url);
+        setResultImage(data.resultUrl);
         setTryOnStatus('success');
       } catch (e: unknown) {
         const err = e as Error;
@@ -87,7 +87,7 @@ function EmbedContent() {
     };
 
     runTryOn();
-  }, [isValid, currentUser, userPhotoUrl, productId, productImage, marketplaceKey]);
+  }, [isValid, currentUser, userPhotoUrl, productId, productImageUrl, marketplaceKey]);
 
   useEffect(() => {
     // Send resize message to parent window to adjust iframe bounds automatically
@@ -147,8 +147,8 @@ function EmbedContent() {
   if (tryOnStatus === 'loading') {
     return (
       <div className="w-full aspect-[3/4] relative overflow-hidden rounded-2xl border border-white/10 bg-black flex flex-col items-center justify-center min-h-[400px]">
-        {productImage && (
-          <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-20 blur-sm" alt="Garment loading background" />
+        {productImageUrl && (
+          <img src={productImageUrl} className="absolute inset-0 w-full h-full object-cover opacity-20 blur-sm" alt="Garment loading background" />
         )}
         <div className="relative z-10 flex flex-col items-center justify-center text-center p-6 bg-black/60 rounded-2xl border border-white/10 backdrop-blur-md">
           <div className="w-10 h-10 border-2 border-[#bef264]/20 border-t-[#bef264] rounded-full animate-spin mb-4" />

@@ -1,9 +1,9 @@
-import type { ClothingCategory } from '@/types';
+import type { ProductCategory } from '@/types';
 
 /** Map mock / UI outfit labels to Supabase `clothing_assets.category` values. */
-export function outfitLabelToClothingCategory(label: string): ClothingCategory {
+export function outfitLabelToClothingCategory(label: string): ProductCategory {
   const key = label.trim().toUpperCase();
-  const map: Record<string, ClothingCategory> = {
+  const map: Record<string, ProductCategory> = {
     TOPS: 'tops',
     TOP: 'tops',
     BOTTOMS: 'bottoms',

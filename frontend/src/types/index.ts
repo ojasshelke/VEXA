@@ -140,20 +140,21 @@ export interface AvatarReadyWebhook {
   timestamp: string;
 }
 
-// ─── Legacy (kept for existing try-on studio) ────────────────────────────────
 
-export type ClothingCategory = 'tops' | 'bottoms' | 'dresses' | 'outerwear' | 'shoes' | 'accessories';
+
+
+export type ProductCategory = 'clothing' | 'shoes' | 'hats' | 'jewelry' | 'bags' | 'tops' | 'bottoms' | 'dresses' | 'outerwear' | 'accessories';
 
 export interface Outfit {
   id: string;
   name: string;
   price: number;
   imageUrl: string;
-  category: string;
+  category: ProductCategory;
 }
 
 export interface ClothingGlbApiResponse {
-  glb_url?: string;
+  glbUrl?: string;
   cached?: boolean;
   error?: string;
 }
@@ -161,17 +162,17 @@ export interface ClothingGlbApiResponse {
 // ─── Direct API (Restoring Missing Types) ───────────────────────────────────
 
 export interface ARSessionRequestBody {
-  user_id: string;
-  product_id: string;
+  userId: string;
+  productId: string;
 }
 
 export interface ARSessionResponse {
-  session_token: string;
+  sessionToken: string;
   message?: string;
 }
 
 export interface VideoTryOnStartResponse {
-  job_id: string;
+  jobId: string;
   status: string;
   message: string;
 }
@@ -180,7 +181,7 @@ export type VideoJobStatus = 'processing' | 'completed' | 'failed';
 
 export interface VideoJobStatusResponse {
   status: VideoJobStatus;
-  progress_percent: number;
-  result_video_url: string | null;
-  error_message: string | null;
+  progressPercent: number;
+  resultVideoUrl: string | null;
+  errorMessage: string | null;
 }

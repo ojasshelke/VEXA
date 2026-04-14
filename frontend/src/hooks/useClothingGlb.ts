@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { ClothingCategory } from '@/types';
+import type { ProductCategory } from '@/types';
 
 interface UseClothingGlbResult {
   glbUrl: string | null;
@@ -10,14 +10,14 @@ interface UseClothingGlbResult {
 }
 
 interface ClothingApiJson {
-  glb_url?: string;
+  glbUrl?: string;
   error?: string;
 }
 
 export function useClothingGlb(
   productId: string | undefined,
   productImageUrl: string | undefined,
-  category: ClothingCategory = 'tops'
+  category: ProductCategory = 'tops'
 ): UseClothingGlbResult {
   const [glbUrl, setGlbUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,8 +34,8 @@ export function useClothingGlb(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            product_id: productId,
-            product_image_url: productImageUrl,
+            productId,
+            productImageUrl,
             category,
           }),
         });
@@ -43,10 +43,10 @@ export function useClothingGlb(
         if (!res.ok) {
           throw new Error(data.error ?? 'Failed to generate clothing mesh');
         }
-        if (!data.glb_url) {
+        if (!data.glbUrl) {
           throw new Error('No GLB URL in response');
         }
-        setGlbUrl(data.glb_url);
+        setGlbUrl(data.glbUrl);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {

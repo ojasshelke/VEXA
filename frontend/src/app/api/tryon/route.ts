@@ -111,12 +111,12 @@ interface HandleTryOnInput {
 }
 
 export interface HandleTryOnResult {
-  result_url: string;
+  resultUrl: string;
   storagePath: string;
   cached: boolean;
-  fit_label: string;
-  recommended_size: string;
-  fit_score: number;
+  fitLabel: string;
+  recommendedSize: string;
+  fitScore: number;
 }
 
 /** Row shape from tryon_results select */
@@ -151,12 +151,12 @@ export async function handleTryOn(
     }
     const fitLabel = cached.fit_label ?? 'True to size';
     return {
-      result_url: signedData.signedUrl,
+      resultUrl: signedData.signedUrl,
       storagePath: cached.result_url,
       cached: true,
-      fit_label: fitLabel,
-      recommended_size: cached.recommended_size ?? 'M',
-      fit_score: getFitScore(fitLabel),
+      fitLabel: fitLabel,
+      recommendedSize: cached.recommended_size ?? 'M',
+      fitScore: getFitScore(fitLabel),
     };
   }
 
@@ -204,16 +204,16 @@ export async function handleTryOn(
   }
 
   // 5. Compute fit metadata
-  let fit_label = 'True to size';
-  let recommended_size = 'M';
+  let fitLabel = 'True to size';
+  let recommendedSize = 'M';
 
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
   const { data: sizeChart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
 
   if (user && sizeChart && Array.isArray(sizeChart) && sizeChart.length > 0) {
     const recommendation = getFitRecommendation(user, sizeChart);
-    fit_label = recommendation.fitLabel;
-    recommended_size = recommendation.recommendedSize;
+    fitLabel = recommendation.fitLabel;
+    recommendedSize = recommendation.recommendedSize;
   }
 
   // 6. Store result — save storagePath for re-signing later, not the signed URL
@@ -222,20 +222,20 @@ export async function handleTryOn(
     product_id: productId,
     product_image_url: productImageUrl ?? '',
     result_url: storagePath,
-    fit_label,
-    recommended_size,
+    fit_label: fitLabel,
+    recommended_size: recommendedSize,
   };
 
   // @ts-ignore
   await supabase.from('tryon_results').insert(insertData);
 
   return {
-    result_url: signedData.signedUrl,
+    resultUrl: signedData.signedUrl,
     storagePath,
     cached: false,
-    fit_label,
-    recommended_size,
-    fit_score: getFitScore(fit_label),
+    fitLabel,
+    recommendedSize,
+    fitScore: getFitScore(fitLabel),
   };
 }
 
@@ -249,39 +249,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const body = await req.json();
-    const { user_id, user_photo_url, product_image_url, product_id } = body as {
-      user_id?: string;
-      user_photo_url?: string;
-      product_image_url?: string;
-      product_id?: string;
+    const { userId, userPhotoUrl, productImageUrl, productId } = body as {
+      userId?: string;
+      userPhotoUrl?: string;
+      productImageUrl?: string;
+      productId?: string;
     };
 
-    if (!product_id) {
-      return NextResponse.json({ error: 'product_id is required' }, { status: 400 });
+    if (!productId) {
+      return NextResponse.json({ error: 'productId is required' }, { status: 400 });
     }
 
     // Validate all incoming URLs at entry point — not mid-function
-    const validatedPhotoUrl = user_photo_url ? validateSecureUrl(user_photo_url, 'user_photo_url') : undefined;
-    const validatedProductUrl = product_image_url ? validateSecureUrl(product_image_url, 'product_image_url') : undefined;
+    const validatedPhotoUrl = userPhotoUrl ? validateSecureUrl(userPhotoUrl, 'userPhotoUrl') : undefined;
+    const validatedProductUrl = productImageUrl ? validateSecureUrl(productImageUrl, 'productImageUrl') : undefined;
 
     // Authenticate
-    const authResult = await authenticateRequest(req, user_id ?? '');
+    const authResult = await authenticateRequest(req, userId ?? '');
     if (authResult instanceof NextResponse) return authResult;
 
-    const { userId } = authResult;
+    const authenticatedUserId = authResult.userId;
     const supabase = getServiceSupabase();
 
     const result = await handleTryOn(
-      { userId, productId: product_id, userPhotoUrl: validatedPhotoUrl, productImageUrl: validatedProductUrl },
+      { userId: authenticatedUserId, productId, userPhotoUrl: validatedPhotoUrl, productImageUrl: validatedProductUrl },
       supabase
     );
 
     return NextResponse.json({
-      result_url: result.result_url,
+      resultUrl: result.resultUrl,
       cached: result.cached,
-      fit_label: result.fit_label,
-      recommended_size: result.recommended_size,
-      fit_score: result.fit_score,
+      fitLabel: result.fitLabel,
+      recommendedSize: result.recommendedSize,
+      fitScore: result.fitScore,
     }, { status: 200 });
   } catch (error: unknown) {
     const err = error instanceof Error ? error : new Error(String(error));

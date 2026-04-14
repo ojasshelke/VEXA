@@ -8,15 +8,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (authError) return authError;
 
     const body = await req.json();
-    const { userId, photoBase64, measurements } = body;
+    const { userId, photoUrl, photoBase64, measurements } = body;
 
-    // The Python API expects 'photo_url'. Assuming photoBase64 can act as photo_url or client sends photo_url natively based on instructions.
-    // The prompt: "Accept POST: user_id, photo_url, measurements object"
-    const parsedUserId = userId || body.user_id;
-    const parsedPhoto = photoBase64 || body.photo_url;
+    const parsedPhoto = photoUrl || photoBase64;
     
-    if (!parsedUserId || !parsedPhoto || !measurements) {
-      return NextResponse.json({ error: 'Missing required fields: userId, photo_url/photoBase64, or measurements' }, { status: 400 });
+    if (!userId || !parsedPhoto || !measurements) {
+      return NextResponse.json({ error: 'Missing required fields: userId, photoUrl, or measurements' }, { status: 400 });
     }
 
     const pyServiceUrl = process.env.AVATAR_SERVICE_URL;
@@ -54,13 +51,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const { error: dbError } = await supabase
       .from('users')
       .update({ avatar_url: data.avatar_url })
-      .eq('id', parsedUserId);
+      .eq('id', userId);
 
     if (dbError) {
        console.warn("Failed to update avatar_url linking:", dbError.message);
     }
 
-    return NextResponse.json({ avatar_url: data.avatar_url, status: 'success' });
+    return NextResponse.json({ avatarUrl: data.avatar_url, status: 'success' });
 
   } catch (err: unknown) {
     const error = err as Error;

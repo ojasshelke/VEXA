@@ -28,10 +28,10 @@ export default function ResultUI() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: currentUser.id,
-          user_photo_url: userPhotoUrl,
-          product_image_url: selectedOutfit.imageUrl,
-          product_id: selectedOutfit.id
+          userId: currentUser.id,
+          userPhotoUrl,
+          productImageUrl: selectedOutfit.imageUrl,
+          productId: selectedOutfit.id
         })
       });
       
@@ -46,7 +46,7 @@ export default function ResultUI() {
         userId: currentUser.id,
         productId: selectedOutfit.id,
         originalImage: userPhotoUrl,
-        resultImage: data.result_url,
+        resultImage: data.resultUrl,
         outfit: selectedOutfit,
         status: 'ready'
       });
@@ -66,7 +66,7 @@ export default function ResultUI() {
       const res = await fetch("/api/size", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: currentUser.id, product_id: selectedOutfit.id })
+        body: JSON.stringify({ userId: currentUser.id, productId: selectedOutfit.id })
       });
       if (res.ok) {
         const data = await res.json();

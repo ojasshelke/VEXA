@@ -14,8 +14,8 @@ const MOCK_PRODUCTS: Outfit[] = Array.from({ length: 12 }).map((_, i) => ({
   name: `Premium Collection Item ${i+1}`,
   price: 89.99 + (i * 10),
   imageUrl: `https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=400&h=600`,
-  category: i % 2 === 0 ? "TOPS" : (i % 3 === 0 ? "DRESS" : "OUTERWEAR")
-}));
+  category: i % 2 === 0 ? "tops" : (i % 3 === 0 ? "dresses" : "outerwear")
+} as Outfit));
 
 export default function ProductsPage() {
   const { currentUser, userPhotoUrl } = useStore();
@@ -34,28 +34,28 @@ export default function ProductsPage() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              user_id: currentUser.id,
-              user_photo_url: userPhotoUrl,
+              userId: currentUser.id,
+              userPhotoUrl: userPhotoUrl,
               products: MOCK_PRODUCTS.map(p => ({
-                product_id: p.id,
-                product_image_url: p.imageUrl
+                productId: p.id,
+                productImageUrl: p.imageUrl
               }))
             })
           });
 
           if (res.ok) {
-            const data: Array<{ product_id: string, result_url: string }> = await res.json();
+            const data: Array<{ productId: string, resultUrl: string }> = await res.json();
             const newResults: Record<string, TryOnResult> = {};
             data.forEach(item => {
-              newResults[item.product_id] = {
+              newResults[item.productId] = {
                 id: Date.now().toString(),
                 userId: currentUser.id,
-                productId: item.product_id,
-                resultImage: item.result_url,
+                productId: item.productId,
+                resultImage: item.resultUrl,
                 originalImage: userPhotoUrl,
                 status: 'ready'
               } as TryOnResult;
-              setLoadingMap(prev => ({ ...prev, [item.product_id]: false }));
+              setLoadingMap(prev => ({ ...prev, [item.productId]: false }));
             });
             setResults(prev => ({ ...prev, ...newResults }));
             

@@ -15,11 +15,11 @@ function getSupabase(): SupabaseClient {
 function parseBody(raw: unknown): ARSessionRequestBody | null {
   if (raw === null || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const user_id = o.user_id;
-  const product_id = o.product_id;
-  if (typeof user_id !== 'string' || user_id.length === 0) return null;
-  if (typeof product_id !== 'string' || product_id.length === 0) return null;
-  return { user_id, product_id };
+  const userId = o.userId;
+  const productId = o.productId;
+  if (typeof userId !== 'string' || userId.length === 0) return null;
+  if (typeof productId !== 'string' || productId.length === 0) return null;
+  return { userId, productId };
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const body = parseBody(parsed);
     if (!body) {
       return NextResponse.json(
-        { error: 'Missing user_id or product_id' },
+        { error: 'Missing userId or productId' },
         { status: 400 }
       );
     }
@@ -43,17 +43,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const { error: insertError } = await supabase.from('usage_logs').insert({
       endpoint: 'ar_session',
-      user_id: body.user_id,
-      product_id: body.product_id,
+      user_id: body.userId,
+      product_id: body.productId,
     });
 
     if (insertError) {
       console.warn('[/api/ar/session] usage_logs insert:', insertError.message);
     }
 
-    const token = `ar_${Date.now()}_${body.user_id.slice(0, 8)}`;
+    const token = `ar_${Date.now()}_${body.userId.slice(0, 8)}`;
     const payload: ARSessionResponse = {
-      session_token: token,
+      sessionToken: token,
       message: 'AR session started',
     };
 

@@ -21,10 +21,10 @@ interface VideoJobStatusRow {
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const jobId = req.nextUrl.searchParams.get('job_id');
+    const jobId = req.nextUrl.searchParams.get('jobId');
     if (!jobId) {
       return NextResponse.json(
-        { error: 'Missing job_id query param' },
+        { error: 'Missing jobId query param' },
         { status: 400 }
       );
     }
@@ -44,9 +44,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const row = data as VideoJobStatusRow;
     const payload: VideoJobStatusResponse = {
       status: row.status,
-      progress_percent: row.progress_percent ?? 0,
-      result_video_url: row.result_video_url ?? null,
-      error_message: row.error_message ?? null,
+      progressPercent: row.progress_percent ?? 0,
+      resultVideoUrl: row.result_video_url ?? null,
+      errorMessage: row.error_message ?? null,
     };
 
     return NextResponse.json(payload);

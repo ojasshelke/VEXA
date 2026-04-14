@@ -22,12 +22,12 @@ interface RouteContext {
 
 /** Shape returned by handleTryOn — explicit type, no `any` */
 interface TryOnData {
-  result_url: string;
+  resultUrl: string;
   storagePath: string;
   cached: boolean;
-  fit_label: string;
-  recommended_size: string;
-  fit_score: number;
+  fitLabel: string;
+  recommendedSize: string;
+  fitScore: number;
 }
 
 export async function POST(req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
     return NextResponse.json({ error: 'Unauthorized: Invalid Bearer token' }, { status: 401 });
   }
 
-  const userId = user.id;
+  const authenticatedUserId = user.id;
 
   // Service client for DB/storage operations
   const supabase: SupabaseClient<Database> = createClient<Database>(supabaseUrl, supabaseServiceKey ?? supabaseAnonKey, {
@@ -67,21 +67,21 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
 
   try {
     // 2. Import handleTryOn directly — no internal HTTP fetch
-    const tryOnData: TryOnData = await handleTryOn({ userId, productId }, supabase);
+    const tryOnData: TryOnData = await handleTryOn({ userId: authenticatedUserId, productId }, supabase);
 
     // 3. Use getFitScore — no Math.random()
-    const fitScore = getFitScore(tryOnData.fit_label);
+    const fitScore = getFitScore(tryOnData.fitLabel);
 
     // TODO: heatmapUrl — implement real heatmap generation from Python inference service
     const heatmapUrl: string | null = null;
 
     const result: TryOnResult = {
-      id: `res_${productId}_${userId}_${Date.now()}`,
-      userId,
+      id: `res_${productId}_${authenticatedUserId}_${Date.now()}`,
+      userId: authenticatedUserId,
       productId,
-      renderUrl: tryOnData.result_url,
+      renderUrl: tryOnData.resultUrl,
       fitScore,
-      sizeRecommendation: tryOnData.recommended_size,
+      sizeRecommendation: tryOnData.recommendedSize,
       heatmapUrl: heatmapUrl ?? undefined,
       status: 'ready',
     };

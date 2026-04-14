@@ -84,7 +84,7 @@ export default function ProductDetailPage() {
         const res = await fetch("/api/size", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: currentUser.id, product_id: selectedOutfit.id })
+          body: JSON.stringify({ userId: currentUser.id, productId: selectedOutfit.id })
         });
         if (res.ok) {
           const data = await res.json() as { fitLabel?: string; recommendedSize?: string };

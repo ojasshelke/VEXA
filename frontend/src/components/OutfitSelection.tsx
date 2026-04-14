@@ -11,42 +11,42 @@ const OUTFITS: Outfit[] = [
     name: "Urban Explorer Jacket",
     price: 129.99,
     imageUrl: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=800&fit=crop",
-    category: "Outerwear"
+    category: "outerwear"
   },
   {
     id: "outfit-2",
     name: "Summer Silk Dress",
     price: 89.50,
     imageUrl: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&h=800&fit=crop",
-    category: "Dresses"
+    category: "dresses"
   },
   {
     id: "outfit-3",
     name: "Classic Denim Look",
     price: 154.00,
     imageUrl: "https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=600&h=800&fit=crop",
-    category: "Casual"
+    category: "tops"
   },
   {
     id: "outfit-4",
     name: "Midnight Evening Gown",
     price: 299.99,
     imageUrl: "https://images.unsplash.com/photo-1550639525-c97d455acf70?w=600&h=800&fit=crop",
-    category: "Formal"
+    category: "dresses"
   },
   {
     id: "outfit-5",
     name: "Minimalist T-Shirt",
     price: 35.00,
     imageUrl: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&h=800&fit=crop",
-    category: "Basics"
+    category: "tops"
   },
   {
     id: "outfit-6",
     name: "Tailored Power Suit",
     price: 499.00,
     imageUrl: "https://images.unsplash.com/photo-1578587018452-892bace94f12?w=600&h=800&fit=crop",
-    category: "Suits"
+    category: "outerwear"
   }
 ];
 
@@ -73,11 +73,11 @@ export default function OutfitSelection() {
       setIsBatchPending(true);
       
       const payload = {
-        user_id: currentUser.id,
-        user_photo_url: userPhotoUrl,
+        userId: currentUser.id,
+        userPhotoUrl,
         products: OUTFITS.map(o => ({
-          product_id: o.id,
-          product_image_url: o.imageUrl
+          productId: o.id,
+          productImageUrl: o.imageUrl
         }))
       };
 
@@ -90,15 +90,9 @@ export default function OutfitSelection() {
       .then(data => {
         const resultsMap: Record<string, string> = {};
         if (Array.isArray(data)) {
-          data.forEach((item: Record<string, string>) => {
-            const sizeMap = {
-              1: 'S',
-              2: 'M',
-              3: 'L',
-              4: 'XL'
-            } as Record<string, string>;
-            if (item.result_url) {
-              resultsMap[item.product_id] = item.result_url;
+          data.forEach((item: { productId: string, resultUrl: string }) => {
+            if (item.resultUrl) {
+              resultsMap[item.productId] = item.resultUrl;
             }
           });
         }
