@@ -3,10 +3,11 @@
 /**
  * useTryOn.ts
  * Loads a clothing GLB and prepares draping state for R3F scene.
- * Hit /api/tryon/[productId] then load the signed render GLB.
+ * Hits /api/tryon/[productId] then loads the signed render GLB.
  *
  * RULE: "use client" — R3F hooks require client context.
  * RULE: No raw GLB paths — always use signed URLs from API.
+ * RULE: Auth header is Bearer token matching [productId]/route.ts validation.
  */
 
 import { useState, useCallback } from 'react';
@@ -14,6 +15,7 @@ import type { TryOnResult } from '@/types';
 
 interface UseTryOnOptions {
   userId: string;
+  /** Access token sent as Bearer token in Authorization header */
   apiKey: string;
 }
 
@@ -42,7 +44,8 @@ export function useTryOn(opts: UseTryOnOptions): UseTryOnState & {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-vexa-key': opts.apiKey,
+            // Bearer token auth — matches [productId]/route.ts validation
+            'Authorization': `Bearer ${opts.apiKey}`,
           },
           body: JSON.stringify({
             userId: opts.userId,

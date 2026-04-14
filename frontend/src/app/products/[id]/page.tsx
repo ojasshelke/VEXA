@@ -3,23 +3,79 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { useRouter } from 'next/navigation';
-import { ShoppingCart, Ruler, Box, ArrowLeft } from 'lucide-react';
+import { ShoppingCart, Ruler, Box, ArrowLeft, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { AvatarViewer } from '@/components/AvatarViewer';
+import { useClothingGlb } from '@/hooks/useClothingGlb';
+
+/** Public fallback GLB — full URL, not a local path */
+const FALLBACK_AVATAR_URL =
+  'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Box/glTF-Binary/Box.glb';
+
+interface AvatarApiResponse {
+  status: string;
+  glbUrl?: string;
+  error?: string;
+}
 
 export default function ProductDetailPage() {
   const router = useRouter();
   const { selectedOutfit, currentUser, tryOnResult } = useStore();
-  
+
   const [fitLabel, setFitLabel] = useState<string | null>(null);
   const [recommendedSize, setRecommendedSize] = useState<string | null>(null);
   const [isSizeLoading, setIsSizeLoading] = useState(false);
 
+  // Avatar URL state — fetched from /api/avatar/[userId]
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [isAvatarLoading, setIsAvatarLoading] = useState(false);
+
+  // Clothing GLB — call useClothingGlb with the selected outfit
+  const {
+    glbUrl: clothingGlbUrl,
+    isLoading: isClothingLoading,
+  } = useClothingGlb(
+    selectedOutfit?.id,
+    selectedOutfit?.imageUrl,
+    'tops'
+  );
+
+  // Redirect if no outfit selected
   useEffect(() => {
     if (!selectedOutfit) {
       router.push('/products');
     }
   }, [selectedOutfit, router]);
 
+  // Fetch signed avatar URL from /api/avatar/[userId] on mount
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const fetchAvatarUrl = async () => {
+      setIsAvatarLoading(true);
+      try {
+        const res = await fetch(`/api/avatar/${currentUser.id}`);
+        if (res.ok) {
+          const data: AvatarApiResponse = await res.json();
+          if (data.status === 'ready' && data.glbUrl) {
+            setAvatarUrl(data.glbUrl);
+          } else {
+            setAvatarUrl(FALLBACK_AVATAR_URL);
+          }
+        } else {
+          setAvatarUrl(FALLBACK_AVATAR_URL);
+        }
+      } catch {
+        setAvatarUrl(FALLBACK_AVATAR_URL);
+      } finally {
+        setIsAvatarLoading(false);
+      }
+    };
+
+    void fetchAvatarUrl();
+  }, [currentUser?.id]);
+
+  // Fetch size recommendation
   useEffect(() => {
     const fetchSize = async () => {
       if (!currentUser?.id || !selectedOutfit?.id) return;
@@ -31,9 +87,9 @@ export default function ProductDetailPage() {
           body: JSON.stringify({ user_id: currentUser.id, product_id: selectedOutfit.id })
         });
         if (res.ok) {
-          const data = await res.json();
-          setFitLabel(data.fitLabel);
-          setRecommendedSize(data.recommendedSize);
+          const data = await res.json() as { fitLabel?: string; recommendedSize?: string };
+          setFitLabel(data.fitLabel ?? null);
+          setRecommendedSize(data.recommendedSize ?? null);
         }
       } catch (e) {
         console.error("Size fetch failed:", e);
@@ -41,19 +97,20 @@ export default function ProductDetailPage() {
         setIsSizeLoading(false);
       }
     };
-    
-    fetchSize();
+
+    void fetchSize();
   }, [currentUser, selectedOutfit]);
 
   if (!selectedOutfit) return null;
 
   const displayImage = tryOnResult?.resultImage || selectedOutfit.imageUrl;
+  const is3DLoading = isAvatarLoading || isClothingLoading;
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-8 relative min-h-screen pb-32">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-[400px] bg-[#bef264]/5 blur-[120px] rounded-full pointer-events-none -z-10" />
 
-      <button 
+      <button
         onClick={() => router.back()}
         className="flex items-center gap-2 text-white/50 hover:text-white mb-8 transition-colors"
       >
@@ -63,14 +120,14 @@ export default function ProductDetailPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-start">
         {/* Left: Large Image (Try-on result) */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="relative aspect-[3/4] w-full max-w-lg mx-auto lg:mx-0 glass-panel rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(190,242,100,0.1)] border border-white/10"
         >
-          <img 
-            src={displayImage} 
-            alt={selectedOutfit.name} 
+          <img
+            src={displayImage}
+            alt={selectedOutfit.name}
             className="w-full h-full object-cover"
           />
           {tryOnResult && (
@@ -104,7 +161,7 @@ export default function ProductDetailPage() {
                 <Ruler className="w-4 h-4" />
                 VEXA Fit Engine
               </div>
-              
+
               {isSizeLoading ? (
                 <div className="h-10 flex items-center">
                   <div className="w-5 h-5 border-2 border-[#bef264]/30 border-t-[#bef264] rounded-full animate-spin" />
@@ -123,13 +180,20 @@ export default function ProductDetailPage() {
               )}
             </div>
 
-            {/* 3D Viewer Placeholder */}
-            <div className="glass-panel p-5 rounded-2xl flex flex-col items-center justify-center gap-3 relative overflow-hidden border border-white/10 border-dashed text-center min-h-[140px]">
-              <Box className="w-6 h-6 text-white/40" />
-              <div>
-                <p className="text-white font-medium text-sm">3D View Coming Soon</p>
-                <p className="text-white/40 text-xs mt-1">Interact with the garment in 360°</p>
-              </div>
+            {/* 3D Viewer Panel */}
+            <div className="glass-panel p-0 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-white/10 min-h-[240px]">
+              {is3DLoading ? (
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-6 h-6 text-[#bef264] animate-spin" />
+                  <p className="text-white/40 text-xs">Loading 3D view…</p>
+                </div>
+              ) : (
+                <AvatarViewer
+                  avatarUrl={clothingGlbUrl || avatarUrl || FALLBACK_AVATAR_URL}
+                  className="w-full h-full min-h-[240px]"
+                  showControls={false}
+                />
+              )}
             </div>
           </div>
 
