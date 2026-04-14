@@ -12,7 +12,7 @@ const STEPS = [
 ];
 
 export default function TryOnFlow() {
-  const { isProcessing, setIsProcessing, userImage, selectedOutfit, setTryOnResult } = useStore();
+  const { isProcessing, setIsProcessing, userPhotoUrl, selectedOutfit, setTryOnResult, currentUser } = useStore();
   const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
@@ -35,23 +35,24 @@ export default function TryOnFlow() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userImage,
-            outfitId: selectedOutfit?.id,
-            outfitImageUrl: selectedOutfit?.imageUrl
+            userId: currentUser?.id ?? 'demo_user_001',
+            userPhotoUrl: userPhotoUrl,
+            productId: selectedOutfit?.id,
+            productImageUrl: selectedOutfit?.imageUrl
           })
         });
 
         const data = await response.json();
         
-        if (data.success && selectedOutfit && userImage) {
+        if (data.resultUrl && selectedOutfit && userPhotoUrl) {
           // Slight delay to see the final step text clearly
           setTimeout(() => {
             setTryOnResult({
               id: `${Date.now()}`,
-              userId: 'demo_user_001',
+              userId: currentUser?.id ?? 'demo_user_001',
               productId: selectedOutfit.id,
-              originalImage: userImage,
-              resultImage: data.resultImage,
+              originalImage: userPhotoUrl,
+              resultImage: data.resultUrl,
               outfit: selectedOutfit,
               aiAnalysis: data.aiAnalysis,
               status: 'ready'
@@ -72,7 +73,7 @@ export default function TryOnFlow() {
     processTryOn();
     
     return () => clearInterval(stepInterval);
-  }, [isProcessing, userImage, selectedOutfit, setIsProcessing, setTryOnResult]);
+  }, [isProcessing, userPhotoUrl, selectedOutfit, setIsProcessing, setTryOnResult, currentUser]);
 
   if (!isProcessing) return null;
 

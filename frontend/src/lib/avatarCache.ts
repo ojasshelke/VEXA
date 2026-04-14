@@ -1,10 +1,13 @@
 /**
  * avatarCache.ts
  * Presigned URL generation + short-lived in-memory TTL cache.
- * In production, swap the stub presigner for AWS S3 or Cloudflare R2 SDK.
+ * Uses Cloudflare R2 via AWS S3-compatible SDK for production presigning.
  *
  * RULE: raw storage paths are NEVER returned — only signed URLs with expiry.
  */
+
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export interface SignedUrlEntry {
   url: string;
@@ -17,23 +20,40 @@ const urlCache = new Map<string, SignedUrlEntry>();
 const SIGNED_URL_TTL_SECONDS = 3600; // 1 hour
 const CACHE_GRACE_SECONDS = 60; // refresh 60 s before actual expiry
 
+function getR2Client(): S3Client {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 environment variables missing: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY');
+  }
+
+  return new S3Client({
+    region: 'auto',
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+}
+
 /**
  * Generate a presigned URL for a given storage path.
- * Replace body with real S3/R2 SDK call in production.
+ * Uses Cloudflare R2 via S3-compatible SDK in production,
+ * falls back to CDN URL when R2 is not configured.
  */
 async function generatePresignedUrl(storagePath: string): Promise<string> {
-  // ─── Production: uncomment and fill in your SDK call ─────────────────────
-  // import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-  // import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-  // const client = new S3Client({ region: process.env.AWS_REGION! });
-  // const cmd = new GetObjectCommand({ Bucket: process.env.S3_BUCKET!, Key: storagePath });
-  // return getSignedUrl(client, cmd, { expiresIn: SIGNED_URL_TTL_SECONDS });
-  // ─────────────────────────────────────────────────────────────────────────
+  // Development fallback when R2 is not configured
+  if (!process.env.R2_ACCOUNT_ID) {
+    const base = process.env.STORAGE_BASE_URL ?? 'https://cdn.vexa.dev';
+    return `${base}/${storagePath}`;
+  }
 
-  // ─── Stub for development / testing ──────────────────────────────────────
-  const base = process.env.STORAGE_BASE_URL ?? 'https://cdn.vexa.dev';
-  const token = Buffer.from(`${storagePath}:${Date.now()}`).toString('base64url');
-  return `${base}/${storagePath}?token=${token}&expires=${Date.now() + SIGNED_URL_TTL_SECONDS * 1000}`;
+  const client = getR2Client();
+  const bucket = process.env.R2_BUCKET_NAME;
+  if (!bucket) throw new Error('R2_BUCKET_NAME not configured');
+
+  const command = new GetObjectCommand({ Bucket: bucket, Key: storagePath });
+  return getSignedUrl(client, command, { expiresIn: SIGNED_URL_TTL_SECONDS });
 }
 
 /**

@@ -64,9 +64,12 @@ const itemVariants: Variants = {
 };
 
 export default function OutfitSelection() {
-  const { selectedOutfit, setSelectedOutfit, currentUser, userPhotoUrl } = useStore();
+  const { selectedOutfit, setSelectedOutfit, currentUser, userPhotoUrl, userImage } = useStore();
   const [batchResults, setBatchResults] = useState<Record<string, string>>({});
   const [isBatchPending, setIsBatchPending] = useState(false);
+
+  // The photo is available if either a Supabase URL or a local preview base64 exists
+  const hasPhoto = !!userPhotoUrl || !!userImage;
 
   useEffect(() => {
     if (currentUser?.id && userPhotoUrl) {
@@ -108,10 +111,10 @@ export default function OutfitSelection() {
   return (
     <div className="w-full flex flex-col gap-4">
       <div className="flex items-center gap-2 mb-2">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-500 ${userPhotoUrl ? 'bg-[#bef264] text-white' : 'bg-[#bef264]/20 text-[#d9f99d]'}`}>
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-500 ${hasPhoto ? 'bg-[#bef264] text-white' : 'bg-[#bef264]/20 text-[#d9f99d]'}`}>
           <span className="font-semibold">2</span>
         </div>
-        <h2 className={`text-xl font-medium tracking-wide transition-colors duration-500 ${userPhotoUrl ? 'text-white' : 'text-white/50'}`}>
+        <h2 className={`text-xl font-medium tracking-wide transition-colors duration-500 ${hasPhoto ? 'text-white' : 'text-white/50'}`}>
           Select Garment
         </h2>
       </div>
@@ -132,16 +135,16 @@ export default function OutfitSelection() {
             <motion.div
               key={outfit.id}
               variants={itemVariants}
-              onClick={() => userPhotoUrl && setSelectedOutfit(outfit)}
+              onClick={() => hasPhoto && setSelectedOutfit(outfit)}
               className={`relative group cursor-pointer rounded-2xl overflow-hidden glass-panel transition-all duration-300 ${
-                !userPhotoUrl ? 'opacity-40 grayscale-[0.8] cursor-not-allowed hover:transform-none' : 'hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(139,92,246,0.15)]'
+                !hasPhoto ? 'opacity-40 grayscale-[0.8] cursor-not-allowed hover:transform-none' : 'hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(139,92,246,0.15)]'
               } ${isSelected ? 'ring-2 ring-[#bef264] shadow-[0_0_20px_rgba(139,92,246,0.3)]' : 'ring-1 ring-white/5'}`}
             >
               <div className="aspect-[3/4] overflow-hidden relative">
                 <img 
                   src={displayImage} 
                   alt={outfit.name} 
-                  className={`w-full h-full object-cover transition-transform duration-700 ease-out ${userPhotoUrl ? 'group-hover:scale-110' : ''}`}
+                  className={`w-full h-full object-cover transition-transform duration-700 ease-out ${hasPhoto ? 'group-hover:scale-110' : ''}`}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent pointer-events-none" />
                 

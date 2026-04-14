@@ -71,7 +71,21 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
     if (!bodyUserId) {
       return NextResponse.json({ error: 'userId is required for marketplace requests' }, { status: 400 });
     }
-    // TODO: In production, verify userId belongs to this marketplace via a join table
+    const supabase = getServiceSupabase();
+    const { data: userRecord } = await supabase
+      .from('users')
+      .select('marketplace_id')
+      .eq('id', bodyUserId)
+      .single();
+
+    if (!userRecord) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    if ((userRecord as any).marketplace_id && (userRecord as any).marketplace_id !== marketplaceCtx.marketplaceId) {
+      return NextResponse.json({ error: 'Forbidden: User does not belong to this marketplace' }, { status: 403 });
+    }
+
     return { userId: bodyUserId, marketplace: marketplaceCtx };
   }
 
@@ -226,8 +240,11 @@ export async function handleTryOn(
     recommended_size: recommendedSize,
   };
 
-  // @ts-ignore
-  await supabase.from('tryon_results').insert(insertData);
+  const { error: insertError } = await (supabase.from('tryon_results') as any).insert(insertData);
+  if (insertError) {
+    // Non-fatal: result was generated successfully, log and continue
+    console.warn('[/api/tryon] Failed to cache result:', insertError.message);
+  }
 
   return {
     resultUrl: signedData.signedUrl,

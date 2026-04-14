@@ -144,42 +144,17 @@ export async function POST(
     }
     const taskId = (taskJson as MeshyCreateResponse).result;
 
-    const startTime = Date.now();
-    let glbUrl: string | null = null;
-
-    while (Date.now() - startTime < 180_000) {
-      await new Promise((r) => setTimeout(r, 5000));
-
-      const pollRes = await fetch(`${MESHY_API_BASE}/image-to-3d/${taskId}`, {
-        headers: { Authorization: `Bearer ${meshyKey}` },
-      });
-
-      if (!pollRes.ok) continue;
-
-      const pollJson: unknown = await pollRes.json();
-      if (typeof pollJson !== 'object' || pollJson === null) continue;
-      const pollData = pollJson as MeshyTaskResponse;
-
-      if (pollData.status === 'SUCCEEDED' && pollData.model_urls?.glb) {
-        glbUrl = pollData.model_urls.glb;
-        break;
-      }
-      if (pollData.status === 'FAILED') {
-        throw new Error('Meshy generation failed');
-      }
-    }
-
-    if (!glbUrl) {
-      throw new Error('Meshy generation timed out');
-    }
-
+    // Submit task to Meshy — DO NOT poll here (serverless timeout risk)
+    // Persist pending task to Supabase for client to poll via /api/clothing/status/[taskId]
     const { error: upsertError } = await supabase.from('clothing_assets').upsert(
       {
         product_id: productId,
         product_image_url: productImageUrl,
-        glb_url: glbUrl,
         category,
-      },
+        meshy_task_id: taskId,
+        glb_url: null,
+        status: 'pending',
+      } as any,
       { onConflict: 'product_id' }
     );
 
@@ -187,7 +162,7 @@ export async function POST(
       console.error('[/api/clothing] Supabase upsert:', upsertError.message);
     }
 
-    return NextResponse.json({ glbUrl, cached: false });
+    return NextResponse.json({ taskId, status: 'pending', cached: false } as any);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[/api/clothing]', message);

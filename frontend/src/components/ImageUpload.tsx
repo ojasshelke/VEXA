@@ -1,16 +1,17 @@
-"use client";
 import React, { useCallback, useState } from "react";
-import { UploadCloud, CheckCircle2, RefreshCw } from "lucide-react";
+import { UploadCloud, CheckCircle2, RefreshCw, Loader2 } from "lucide-react";
 import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "framer-motion";
 import { useStore } from "@/store/useStore";
+import { supabase } from "@/lib/supabase";
 
 const PLACEHOLDER_MODEL = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&q=80";
 
 export default function ImageUpload() {
-  const { userImage, setUserImage } = useStore();
+  const { userImage, setUserImage, setUserPhotoUrl, currentUser } = useStore();
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
-  // 3D Parallax hook values
+  // 3D Parallax hook values...
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
@@ -66,20 +67,43 @@ export default function ImageUpload() {
     }
   }, []);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
-    }
-  };
-
-  const handleFile = (file: File) => {
+  const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
+    
+    // 1. Set local preview immediately
     const reader = new FileReader();
     reader.onload = (event) => {
       setUserImage(event.target?.result as string);
     };
     reader.readAsDataURL(file);
-  };
+
+    // 2. Upload to Supabase for backend access
+    setIsUploading(true);
+    try {
+      const fileName = `temp_${currentUser?.id || 'guest'}_${Date.now()}.jpg`;
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(`uploads/${fileName}`, file, { cacheControl: '3600', upsert: true });
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(data.path);
+
+      setUserPhotoUrl(publicUrl);
+    } catch (err) {
+      console.error("Upload failed", err);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [currentUser, setUserImage, setUserPhotoUrl]);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFile(e.target.files[0]);
+    }
+  }, [handleFile]);
 
   return (
     <div className="w-full flex flex-col gap-4">
@@ -95,7 +119,7 @@ export default function ImageUpload() {
         
         {userImage && (
           <button 
-            onClick={() => setUserImage(null)}
+            onClick={() => { setUserImage(null); setUserPhotoUrl(null); }}
             className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-md bg-white/5 border border-white/10 hover:bg-white/10 text-white/70 hover:text-white transition-colors"
           >
             <RefreshCw className="w-3 h-3" /> Reset
@@ -114,10 +138,11 @@ export default function ImageUpload() {
       >
         <input 
           type="file" 
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50 pointer-events-none" 
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50" 
           accept="image/*"
           id="file-upload"
           onChange={handleFileChange}
+          disabled={isUploading}
         />
         
         <motion.div
@@ -139,7 +164,7 @@ export default function ImageUpload() {
           {/* Main Focused Image moving forward slightly */}
           <motion.div 
             style={{ x: foregroundX, y: foregroundY }}
-            className={`absolute inset-0 w-full h-full z-10 transition-transform duration-700 ease-out group-hover:scale-[1.03] ${!userImage && 'filter grayscale-[0.8] contrast-125'}`}
+            className={`absolute inset-0 w-full h-full z-10 transition-transform duration-700 ease-out group-hover:scale-[1.03] ${(!userImage || isUploading) && 'filter grayscale-[0.8] contrast-125'}`}
           >
             <img 
               src={currentImage} 
@@ -155,7 +180,12 @@ export default function ImageUpload() {
 
           {/* HUD Overlay */}
           <div className="absolute inset-0 z-40 p-6 flex flex-col justify-end pointer-events-none">
-            {!userImage ? (
+            {isUploading ? (
+              <div className="flex flex-col items-center justify-center h-full gap-4 text-center mt-auto mb-auto bg-black/60 backdrop-blur-md rounded-2xl p-6 border border-white/10 mx-4 pointer-events-auto">
+                <Loader2 className="w-8 h-8 text-[#bef264] animate-spin" />
+                <p className="text-white font-medium">Scanning Profile...</p>
+              </div>
+            ) : !userImage ? (
               <AnimatePresence>
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
@@ -190,7 +220,7 @@ export default function ImageUpload() {
           </div>
           
           {/* Drag dropping overlay state */}
-          {isDragging && (
+          {isDragging && !isUploading && (
             <div className="absolute inset-0 z-50 bg-[#bef264]/20 backdrop-blur-sm border-2 border-[#bef264] border-dashed rounded-2xl flex items-center justify-center flex-col gap-4 pointer-events-none">
               <UploadCloud className="w-12 h-12 text-[#bef264] animate-bounce" />
               <h3 className="text-[#a3e635] font-bold text-2xl drop-shadow-md">Drop to scan</h3>

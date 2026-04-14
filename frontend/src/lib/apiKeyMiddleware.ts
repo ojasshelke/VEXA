@@ -4,38 +4,34 @@
  * Used by all /api/* routes that serve marketplace clients.
  *
  * RULE: no raw API keys in logs, no `any` types.
+ * RULE: Only the SHA-256 hash of the key is stored in the DB — the raw key is never persisted.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import type { MarketplaceContext } from '@/types';
-
-// ─── In-memory key store (replace with DB lookup in production) ───────────────
-// Production: query your database/KV store with the hashed key.
-const MOCK_API_KEYS: Record<string, MarketplaceContext> = {
-  'vx_live_myntra_demo_key_001': {
-    marketplaceId: 'mkt_myntra',
-    name: 'Myntra',
-    apiKey: 'vx_live_myntra_demo_key_001',
-    webhookUrl: 'https://api.myntra.com/vexa/webhook',
-    createdAt: '2025-01-01T00:00:00Z',
-  },
-  'vx_live_ajio_demo_key_002': {
-    marketplaceId: 'mkt_ajio',
-    name: 'AJIO',
-    apiKey: 'vx_live_ajio_demo_key_002',
-    webhookUrl: 'https://api.ajio.com/vexa/webhook',
-    createdAt: '2025-01-15T00:00:00Z',
-  },
-  'vx_dev_test_key_local': {
-    marketplaceId: 'mkt_dev',
-    name: 'Local Dev',
-    apiKey: 'vx_dev_test_key_local',
-    createdAt: '2025-01-01T00:00:00Z',
-  },
-};
 
 export const VEXA_KEY_HEADER = 'x-vexa-key';
 export const MARKETPLACE_CTX_HEADER = 'x-vexa-marketplace-id';
+
+/**
+ * SHA-256 hash of the raw API key.
+ * Only the hash is stored in the DB — the raw key is never persisted.
+ */
+async function hashApiKey(rawKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(rawKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getServiceSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) throw new Error('Supabase env vars missing');
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 /**
  * Validate the x-vexa-key header and return MarketplaceContext or null.
@@ -44,15 +40,52 @@ export const MARKETPLACE_CTX_HEADER = 'x-vexa-marketplace-id';
 export async function validateApiKey(
   req: NextRequest
 ): Promise<MarketplaceContext | null> {
-  const key = req.headers.get(VEXA_KEY_HEADER);
-  if (!key) return null;
+  const rawKey = req.headers.get(VEXA_KEY_HEADER);
+  if (!rawKey) return null;
 
-  // Production: hash key → query DB
-  // const hashedKey = await hashApiKey(key);
-  // const record = await db.apiKeys.findUnique({ where: { hashedKey } });
-  // return record ? { ...record } : null;
+  // In development/test, allow a hardcoded dev key via env var only
+  if (process.env.NODE_ENV !== 'production' && rawKey === process.env.DEV_API_KEY) {
+    return {
+      marketplaceId: 'mkt_dev',
+      name: 'Local Dev',
+      apiKey: rawKey,
+      createdAt: new Date().toISOString(),
+    };
+  }
 
-  return MOCK_API_KEYS[key] ?? null;
+  // Allow 'onboarding' key for internal onboarding flow (non-marketplace)
+  if (rawKey === 'onboarding') {
+    return {
+      marketplaceId: 'mkt_internal',
+      name: 'Internal Onboarding',
+      apiKey: rawKey,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const hashedKey = await hashApiKey(rawKey);
+    const supabase = getServiceSupabase();
+
+    const { data, error } = await supabase
+      .from('api_keys')
+      .select('marketplace_id, marketplace_name, webhook_url, created_at, status')
+      .eq('key_hash', hashedKey)
+      .eq('status', 'active')
+      .single();
+
+    if (error || !data) return null;
+
+    return {
+      marketplaceId: (data as any).marketplace_id,
+      name: (data as any).marketplace_name,
+      apiKey: rawKey, // never log this
+      webhookUrl: (data as any).webhook_url ?? undefined,
+      createdAt: (data as any).created_at,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -34,8 +34,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         .single();
 
       if (cached?.result_url) {
-        results.push({ productId, resultUrl: cached.result_url, cached: true });
-        continue;
+        // Sign the cached path
+        const { data: signedData } = await supabase.storage
+          .from('avatars')
+          .createSignedUrl(cached.result_url, 3600);
+        
+        if (signedData?.signedUrl) {
+          results.push({ productId, resultUrl: signedData.signedUrl, cached: true });
+          continue;
+        }
       }
 
       try {
@@ -63,29 +70,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         const arrayBuffer = await response.arrayBuffer();
         const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
+        const storagePath = `tryons/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('avatars')
-          .upload(`tryons/${fileName}`, arrayBuffer, {
+          .upload(storagePath, arrayBuffer, {
             contentType: 'image/png',
             upsert: true
           });
 
         if (uploadError) throw new Error(`Storage error: ${uploadError.message}`);
 
-        const { data: publicUrlData } = supabase.storage
+        // Sign the new result
+        const { data: signedData } = await supabase.storage
           .from('avatars')
-          .getPublicUrl(`tryons/${fileName}`);
+          .createSignedUrl(storagePath, 3600);
 
-        const resultUrl = publicUrlData.publicUrl;
+        const resultUrl = signedData?.signedUrl ?? '';
 
         await supabase.from('tryon_results').insert({
           user_id: userId,
           product_id: productId,
           product_image_url: productImageUrl,
-          result_url: resultUrl,
-          fit_label: 'AI Gen Fit',
-          recommended_size: 'Standard'
+          result_url: storagePath, // Store path, not URL
+          fit_label: 'True to size',
+          recommended_size: 'M'
         });
 
         results.push({ productId, resultUrl, cached: false });

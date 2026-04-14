@@ -9,6 +9,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [isReady, setIsReady] = useState(false);
+  const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
     if (isLoading) return;
@@ -31,9 +32,11 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     } else {
       setIsReady(true);
     }
+    setHasMounted(true);
   }, [user, isLoading, pathname, router]);
 
-  if (!isReady || isLoading) {
+  // Only show the global loading spinner on the initial mount or when actually loading a logged-out state
+  if ((!isReady && isLoading) || (!hasMounted && isLoading)) {
     return (
       <div className="w-full min-h-screen flex items-center justify-center bg-black absolute inset-0 z-[100]">
         <div className="w-8 h-8 border-2 border-[#bef264]/20 border-t-[#bef264] rounded-full animate-spin" />
