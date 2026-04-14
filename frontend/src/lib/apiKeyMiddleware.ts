@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import type { MarketplaceContext } from '@/types';
+import type { ApiKeyRow } from '@/types/database';
 
 export const VEXA_KEY_HEADER = 'x-vexa-key';
 export const MARKETPLACE_CTX_HEADER = 'x-vexa-marketplace-id';
@@ -53,8 +54,8 @@ export async function validateApiKey(
     };
   }
 
-  // Allow 'onboarding' key for internal onboarding flow (non-marketplace)
-  if (rawKey === 'onboarding') {
+  // Internal onboarding flow — key must be set in environment, never hardcoded
+  if (process.env.INTERNAL_ONBOARDING_KEY && rawKey === process.env.INTERNAL_ONBOARDING_KEY) {
     return {
       marketplaceId: 'mkt_internal',
       name: 'Internal Onboarding',
@@ -72,16 +73,17 @@ export async function validateApiKey(
       .select('marketplace_id, marketplace_name, webhook_url, created_at, status')
       .eq('key_hash', hashedKey)
       .eq('status', 'active')
+      .returns<Pick<ApiKeyRow, 'marketplace_id' | 'marketplace_name' | 'webhook_url' | 'created_at' | 'status'>>()
       .single();
 
     if (error || !data) return null;
 
     return {
-      marketplaceId: (data as any).marketplace_id,
-      name: (data as any).marketplace_name,
+      marketplaceId: data.marketplace_id,
+      name: data.marketplace_name,
       apiKey: rawKey, // never log this
-      webhookUrl: (data as any).webhook_url ?? undefined,
-      createdAt: (data as any).created_at,
+      webhookUrl: data.webhook_url ?? undefined,
+      createdAt: data.created_at,
     };
   } catch {
     return null;

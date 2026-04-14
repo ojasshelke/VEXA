@@ -15,11 +15,16 @@ def download_image(url: str) -> np.ndarray:
     return image
 
 
-def extract_face_texture(photo_url: str, output_size: int = 512) -> np.ndarray:
+def extract_face_texture(
+    photo_url: str,
+    output_size: int = 512,
+    save_path: str | None = None,
+) -> np.ndarray:
     """
     Download photo → detect face landmarks → crop face region →
     resize to output_size × output_size texture patch.
     Returns the face texture as a numpy array (RGB, uint8).
+    Optionally saves to save_path as PNG.
     """
     image = download_image(photo_url)
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -50,4 +55,9 @@ def extract_face_texture(photo_url: str, output_size: int = 512) -> np.ndarray:
 
     # Resize to standard texture size
     face_texture = cv2.resize(face_crop, (output_size, output_size), interpolation=cv2.INTER_LANCZOS4)
+
+    if save_path is not None:
+        bgr = cv2.cvtColor(face_texture, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(save_path, bgr)
+
     return face_texture

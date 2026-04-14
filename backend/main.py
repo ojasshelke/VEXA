@@ -44,13 +44,35 @@ async def generate_avatar(req: AvatarRequest):
         mesh: trimesh.Trimesh = generate_body_mesh(req.measurements)
 
         # 3. Extract face texture from photo
-        face_texture = extract_face_texture(req.photo_url)
+        face_texture_array = extract_face_texture(req.photo_url)
 
         # 4. Select nearest archetypes for morph blending
         archetypes = select_archetypes(betas)
 
-        # 5. Export mesh to GLB and upload to R2
+        # 5. Export mesh to GLB with embedded face texture and upload to R2
+        import cv2
+        import numpy as np
+        from PIL import Image
+
         with tempfile.TemporaryDirectory() as tmp:
+            # Save face texture as PNG in temp dir
+            texture_path = f"{tmp}/face_texture.png"
+            face_texture_bgr = cv2.cvtColor(face_texture_array, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(texture_path, face_texture_bgr)
+
+            # Attach texture to mesh if UV coordinates are available
+            if mesh.visual is not None and hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                texture_image = Image.open(texture_path)
+                material = trimesh.visual.material.SimpleMaterial(image=texture_image)
+                mesh.visual = trimesh.visual.TextureVisuals(uv=mesh.visual.uv, material=material)
+            # If no UVs (SMPL-X neutral mesh), export without texture but log the gap
+            else:
+                import logging
+                logging.getLogger("vexa").warning(
+                    "Mesh has no UV coordinates — face texture not embedded. "
+                    "Add UV unwrapping step to generate_body_mesh for full texture support."
+                )
+
             glb_path = f"{tmp}/avatar.glb"
             mesh.export(glb_path)
 

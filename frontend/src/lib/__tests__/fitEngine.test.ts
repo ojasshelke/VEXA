@@ -39,4 +39,21 @@ describe('getFitRecommendation', () => {
     expect(result.recommendedSize).toBe('M');
     expect(result.fitLabel).toBe('True to size');
   });
+
+  it('recommends L for user larger than M', () => {
+    const result = getFitRecommendation({ chest: 97, waist: 81, hips: 101 }, sizeChart as any);
+    expect(result.recommendedSize).toBe('L');
+  });
+
+  it('handles missing optional measurements gracefully', () => {
+    // Only chest provided — should not throw
+    expect(() => getFitRecommendation({ chest: 92 }, sizeChart as any)).not.toThrow();
+  });
+
+  it('fitScore is a number between 0 and 100', () => {
+    const result = getFitRecommendation({ chest: 92, waist: 76, hips: 96 }, sizeChart as any);
+    const score = getFitScore(result.fitLabel);
+    expect(score).toBeGreaterThanOrEqual(0);
+    expect(score).toBeLessThanOrEqual(100);
+  });
 });

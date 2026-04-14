@@ -18,7 +18,7 @@ import { isRateLimited } from '@/lib/rateLimit';
 import { validateApiKey } from '@/lib/apiKeyMiddleware';
 import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
 import type { MarketplaceContext } from '@/types';
-import type { Database } from '@/types/database';
+import type { Database, UserRow, TryOnResultRow } from '@/types/database';
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -76,13 +76,14 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
       .from('users')
       .select('marketplace_id')
       .eq('id', bodyUserId)
+      .returns<Pick<UserRow, 'marketplace_id'>>()
       .single();
 
     if (!userRecord) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    if ((userRecord as any).marketplace_id && (userRecord as any).marketplace_id !== marketplaceCtx.marketplaceId) {
+    if (userRecord.marketplace_id && userRecord.marketplace_id !== marketplaceCtx.marketplaceId) {
       return NextResponse.json({ error: 'Forbidden: User does not belong to this marketplace' }, { status: 403 });
     }
 
@@ -154,7 +155,7 @@ export async function handleTryOn(
     .eq('product_id', productId)
     .single();
 
-  const cached = cachedRecord as any as CachedTryOnRow | null;
+  const cached = cachedRecord as CachedTryOnRow | null;
 
   if (cached?.result_url) {
     const { data: signedData, error: signError } = await supabase.storage
@@ -240,7 +241,7 @@ export async function handleTryOn(
     recommended_size: recommendedSize,
   };
 
-  const { error: insertError } = await (supabase.from('tryon_results') as any).insert(insertData);
+  const { error: insertError } = await supabase.from('tryon_results').insert(insertData);
   if (insertError) {
     // Non-fatal: result was generated successfully, log and continue
     console.warn('[/api/tryon] Failed to cache result:', insertError.message);

@@ -7,3 +7,4 @@ mediapipe
 opencv-python
 boto3
 requests
+Pillow>=10.0.0

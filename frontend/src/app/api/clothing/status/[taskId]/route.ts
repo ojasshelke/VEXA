@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import type { ClothingAssetRow } from '@/types/database';
 
 const MESHY_API_BASE = 'https://api.meshy.ai/openapi/v1';
 
@@ -34,7 +35,7 @@ export async function GET(
 
     await supabase
       .from('clothing_assets')
-      .update({ glb_url: glbUrl, status: 'ready' } as any)
+      .update({ glb_url: glbUrl, status: 'ready' } satisfies Pick<ClothingAssetRow, 'glb_url' | 'status'>)
       .eq('meshy_task_id', taskId);
 
     return NextResponse.json({ status: 'ready', glbUrl });

@@ -21,11 +21,24 @@ export interface UserRow {
 
 export interface ApiKeyRow {
   id: string;
+  marketplace_id: string;
   marketplace_name: string;
-  key: string;
+  key_hash: string;
+  webhook_url: string | null;
   status: 'active' | 'revoked';
-  requests_count: number;
-  monthly_limit: number;
+  created_at: string;
+  last_used_at: string | null;
+  call_count: number;
+}
+
+export interface ClothingAssetRow {
+  id: string;
+  product_id: string;
+  product_image_url: string;
+  category: string | null;
+  meshy_task_id: string | null;
+  glb_url: string | null;
+  status: 'pending' | 'ready' | 'failed';
   created_at: string;
 }
 
@@ -74,8 +87,18 @@ export interface Database {
       };
       api_keys: {
         Row: ApiKeyRow;
-        Insert: Omit<ApiKeyRow, 'id' | 'created_at'> & { id?: string; created_at?: string };
+        Insert: Omit<ApiKeyRow, 'id' | 'created_at' | 'last_used_at' | 'call_count'> & {
+          id?: string;
+          created_at?: string;
+          last_used_at?: string | null;
+          call_count?: number;
+        };
         Update: Partial<Omit<ApiKeyRow, 'id'>>;
+      };
+      clothing_assets: {
+        Row: ClothingAssetRow;
+        Insert: Omit<ClothingAssetRow, 'id' | 'created_at'> & { id?: string; created_at?: string };
+        Update: Partial<Omit<ClothingAssetRow, 'id'>>;
       };
       usage_logs: {
         Row: UsageLogRow;
