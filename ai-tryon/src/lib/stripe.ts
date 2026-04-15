@@ -1,7 +1,10 @@
-export async function createCheckoutSession(
-  marketplaceName: string,
-  tier: 'starter' | 'growth' | 'enterprise'
-): Promise<{ url: string }> {
-  // TODO: Stripe checkout session
-  throw new Error('Not implemented')
+import Stripe from 'stripe';
+
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY is missing');
 }
+
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2023-10-16' as any, // Standard version used in project
+  typescript: true,
+});

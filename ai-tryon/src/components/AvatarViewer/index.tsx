@@ -1,226 +1,101 @@
-"use client";
-
-/**
- * AvatarViewer — React Three Fiber canvas with OrbitControls.
- * Loads a GLB avatar from a signed URL, supports pose switching.
- * Wrapped in Suspense per hard rules.
- *
- * RULE: Always wrap R3F canvas in <Suspense fallback={...}>
- * RULE: "use client" — R3F requires client context
- * RULE: No raw GLB paths — consumer must pass signed URLs
- */
-
-import React, { Suspense, useRef, useState, useEffect } from 'react';
+'use client';
+import React, { Suspense, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, ContactShadows, Center } from '@react-three/drei';
 import type { Group } from 'three';
 import { RotateCcw, ZoomIn, ZoomOut, Sun } from 'lucide-react';
 
-// ─── Avatar GLB Loader ────────────────────────────────────────────────────────
-
-interface AvatarModelProps {
-  glbUrl: string;
-  pose?: AvatarPose;
+class ErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error) { console.error("Avatar Viewer caught error:", error); }
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
 }
 
-type AvatarPose = 'a-pose' | 't-pose' | 'idle';
-
-function AvatarModel({ glbUrl }: AvatarModelProps) {
+function AvatarModel({ glbUrl }: { glbUrl: string }) {
   const { scene } = useGLTF(glbUrl);
   const ref = useRef<Group>(null);
-
-  // Gentle idle rotation
-  useFrame((_, delta) => {
-    if (ref.current) {
-      ref.current.rotation.y += delta * 0.1;
-    }
+  useFrame((state) => {
+    if (ref.current) ref.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.5) * 0.1;
   });
-
   return (
-    <Center>
+    <Center top>
       <primitive ref={ref} object={scene} scale={1} dispose={null} />
     </Center>
   );
 }
 
-// ─── Placeholder Avatar (shown when no GLB is loaded) ─────────────────────────
-
 function PlaceholderAvatar() {
   const ref = useRef<Group>(null);
-  useFrame((_, delta) => {
-    if (ref.current) {
-      ref.current.rotation.y += delta * 0.5;
-    }
-  });
-
+  useFrame((_, delta) => { if (ref.current) ref.current.rotation.y += delta * 0.5; });
   return (
     <group ref={ref}>
-      {/* Stylized humanoid placeholder */}
-      {/* Head */}
-      <mesh position={[0, 1.65, 0]}>
-        <sphereGeometry args={[0.15, 32, 32]} />
-        <meshStandardMaterial color="#bef264" roughness={0.3} metalness={0.1} />
-      </mesh>
-      {/* Torso */}
-      <mesh position={[0, 1.1, 0]}>
-        <boxGeometry args={[0.35, 0.55, 0.18]} />
-        <meshStandardMaterial color="#a3e635" roughness={0.4} />
-      </mesh>
-      {/* Hips */}
-      <mesh position={[0, 0.75, 0]}>
-        <boxGeometry args={[0.32, 0.2, 0.18]} />
-        <meshStandardMaterial color="#84cc16" roughness={0.4} />
-      </mesh>
-      {/* Left leg */}
-      <mesh position={[-0.1, 0.3, 0]}>
-        <boxGeometry args={[0.12, 0.55, 0.12]} />
-        <meshStandardMaterial color="#4d7c0f" roughness={0.5} />
-      </mesh>
-      {/* Right leg */}
-      <mesh position={[0.1, 0.3, 0]}>
-        <boxGeometry args={[0.12, 0.55, 0.12]} />
-        <meshStandardMaterial color="#4d7c0f" roughness={0.5} />
-      </mesh>
-      {/* Left arm */}
-      <mesh position={[-0.26, 1.1, 0]} rotation={[0, 0, 0.3]}>
-        <boxGeometry args={[0.1, 0.45, 0.1]} />
-        <meshStandardMaterial color="#65a30d" roughness={0.4} />
-      </mesh>
-      {/* Right arm */}
-      <mesh position={[0.26, 1.1, 0]} rotation={[0, 0, -0.3]}>
-        <boxGeometry args={[0.1, 0.45, 0.1]} />
-        <meshStandardMaterial color="#65a30d" roughness={0.4} />
-      </mesh>
+      <mesh position={[0, 1.6, 0]}><sphereGeometry args={[0.12, 32, 32]} /><meshStandardMaterial color="#bef264" roughness={0.2} /></mesh>
+      <mesh position={[0, 1.0, 0]}><boxGeometry args={[0.3, 0.6, 0.15]} /><meshStandardMaterial color="#bef264" opacity={0.5} transparent /></mesh>
+      <mesh position={[0, 0.3, 0]}><boxGeometry args={[0.25, 0.6, 0.1]} /><meshStandardMaterial color="#bef264" opacity={0.3} transparent /></mesh>
     </group>
   );
 }
 
-// ─── Loading Spinner ─────────────────────────────────────────────────────────
+const CanvasLoader = () => (
+  <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/20 backdrop-blur-sm z-50">
+    <div className="w-12 h-12 border-4 border-[#bef264]/20 border-t-[#bef264] rounded-full animate-spin" />
+    <p className="text-[#bef264] text-xs font-bold uppercase tracking-widest animate-pulse">Initializing Mesh...</p>
+  </div>
+);
 
-function CanvasLoader() {
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-      <div className="relative w-16 h-16">
-        <div className="absolute inset-0 rounded-full border-2 border-[#bef264]/20 animate-ping" />
-        <div className="absolute inset-2 rounded-full border-2 border-t-[#bef264] border-transparent animate-spin" />
-      </div>
-      <p className="text-white/40 text-sm">Loading avatar…</p>
-    </div>
-  );
-}
-
-// ─── Main AvatarViewer Export ─────────────────────────────────────────────────
-
-interface AvatarViewerProps {
-  glbUrl?: string | null;
-  className?: string;
-  showControls?: boolean;
-}
-
-export function AvatarViewer({ glbUrl, className = '', showControls = true }: AvatarViewerProps) {
+export const AvatarViewer = ({ avatarUrl, className = "" }: { avatarUrl?: string | null, className?: string }) => {
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [zoom, setZoom] = useState(1);
-  const [envPreset, setEnvPreset] = useState<'city' | 'studio' | 'sunset'>('city');
+  const [env, setEnv] = useState<'city' | 'studio' | 'apartment'>('city');
 
   return (
-    <div className={`relative w-full rounded-2xl overflow-hidden bg-black/40 border border-white/10 ${className}`}>
-      {/* R3F Canvas — always wrapped in Suspense per hard rules */}
+    <div className={`relative w-full h-full bg-zinc-950/50 rounded-2xl overflow-hidden border border-white/5 ${className}`}>
       <Suspense fallback={<CanvasLoader />}>
-        <Canvas
-          camera={{ position: [0, 1.0, 3.0 * zoom], fov: 50 }}
-          shadows
-          gl={{ antialias: true, alpha: true }}
-          className="w-full"
-          style={{ height: '100%' }}
-        >
+        <Canvas camera={{ position: [0, 1.2, 3 * zoom], fov: 45 }} shadows dpr={[1, 2]}>
           <ambientLight intensity={0.5} />
-          <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
-          <pointLight position={[-5, 5, 5]} intensity={0.3} color="#bef264" />
-
-          <Environment preset={envPreset} />
-
+          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
+          <Environment preset={env as any} />
           <Suspense fallback={null}>
-            {glbUrl ? (
-              <AvatarModel glbUrl={glbUrl} />
+            {avatarUrl ? (
+              <ErrorBoundary fallback={<PlaceholderAvatar />}>
+                <AvatarModel key={avatarUrl} glbUrl={avatarUrl} />
+              </ErrorBoundary>
             ) : (
               <PlaceholderAvatar />
             )}
           </Suspense>
-
-          <ContactShadows
-            opacity={0.4}
-            scale={2}
-            blur={2}
-            far={2}
-            position={[0, -0.05, 0]}
-          />
-
-          <OrbitControls
-            autoRotate={isAutoRotate}
-            autoRotateSpeed={1.5}
-            enablePan={false}
-            minDistance={1.5}
-            maxDistance={8}
-            minPolarAngle={Math.PI / 8}
-            maxPolarAngle={Math.PI / 1.8}
+          <ContactShadows opacity={0.5} scale={10} blur={2} far={10} resolution={256} color="#000000" />
+          <OrbitControls 
+            autoRotate={isAutoRotate} 
+            enablePan={false} 
+            minPolarAngle={Math.PI / 4} 
+            maxPolarAngle={Math.PI / 1.5} 
+            minDistance={1.5} 
+            maxDistance={5} 
           />
         </Canvas>
       </Suspense>
 
-      {/* ── Overlay Controls ── */}
-      {showControls && (
-        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 pointer-events-none">
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              id="avatar-viewer-rotate-toggle"
-              onClick={() => setIsAutoRotate((p) => !p)}
-              className={`p-2.5 rounded-xl border transition-all duration-200 ${
-                isAutoRotate
-                  ? 'bg-[#bef264]/20 border-[#bef264]/40 text-[#bef264]'
-                  : 'bg-white/5 border-white/10 text-white/50 hover:text-white'
-              }`}
-              title="Toggle auto-rotate"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-            <button
-              id="avatar-viewer-zoom-out"
-              onClick={() => setZoom((z) => Math.min(z + 0.2, 2))}
-              className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all duration-200"
-              title="Zoom out"
-            >
-              <ZoomOut className="w-4 h-4" />
-            </button>
-            <button
-              id="avatar-viewer-zoom-in"
-              onClick={() => setZoom((z) => Math.max(z - 0.2, 0.5))}
-              className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all duration-200"
-              title="Zoom in"
-            >
-              <ZoomIn className="w-4 h-4" />
-            </button>
-            <button
-              id="avatar-viewer-env-toggle"
-              onClick={() =>
-                setEnvPreset((p) =>
-                  p === 'city' ? 'studio' : p === 'studio' ? 'sunset' : 'city'
-                )
-              }
-              className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all duration-200"
-              title="Toggle environment"
-            >
-              <Sun className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* No GLB badge */}
-      {!glbUrl && (
-        <div className="absolute top-4 left-4 px-3 py-1.5 rounded-xl bg-black/60 border border-white/10 text-white/40 text-xs">
-          Placeholder — generate your avatar first
-        </div>
-      )}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 p-2 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl z-10">
+        <button onClick={() => setIsAutoRotate(!isAutoRotate)} className={`p-2 rounded-xl transition-colors ${isAutoRotate ? 'text-[#bef264] bg-[#bef264]/10' : 'text-white/40 hover:text-white'}`}>
+          <RotateCcw className="w-4 h-4" />
+        </button>
+        <div className="w-px h-4 bg-white/10" />
+        <button onClick={() => setZoom(Math.min(zoom + 0.2, 2))} className="p-2 text-white/40 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
+        <button onClick={() => setZoom(Math.max(zoom - 0.2, 0.5))} className="p-2 text-white/40 hover:text-white"><ZoomIn className="w-4 h-4" /></button>
+        <div className="w-px h-4 bg-white/10" />
+        <button onClick={() => setEnv(e => e === 'city' ? 'studio' : e === 'studio' ? 'apartment' : 'city')} className="p-2 text-white/40 hover:text-white"><Sun className="w-4 h-4" /></button>
+      </div>
     </div>
   );
-}
+};
