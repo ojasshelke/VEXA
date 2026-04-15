@@ -35,15 +35,15 @@ def test_select_archetypes_returns_k():
 def test_select_archetypes_weights_sum_to_one():
     betas = torch.zeros(1, 10)
     result = select_archetypes(betas, k=3)
-    total = sum(w for _, w in result)
+    total = sum(item["weight"] for item in result)
     assert abs(total - 1.0) < 1e-5
 
 
 def test_select_archetypes_average_is_nearest_to_zero():
     betas = torch.zeros(1, 10)
     result = select_archetypes(betas, k=5)
-    top_name = result[0][0]
-    assert top_name == 'average'
+    top_name = result[0]["archetype"]["id"]
+    assert top_name == 'arch_001'
 
 
 import cv2

@@ -1,6 +1,7 @@
 import torch
 import trimesh
 import smplx
+import numpy as np
 
 
 def measurements_to_betas(measurements) -> torch.Tensor:
@@ -46,4 +47,36 @@ def generate_body_mesh(measurements) -> trimesh.Trimesh:
     vertices = output.vertices.detach().cpu().numpy().squeeze()
     faces = model.faces
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    
+    # Add cylindrical UV unwrapping so face_texture can be embedded
+    mesh = _add_cylindrical_uv(mesh)
     return mesh
+
+
+def _add_cylindrical_uv(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """
+    Cylindrical UV projection. Not production-perfect but enables
+    face texture embedding without a full UV unwrap pipeline.
+    Centers the mesh, projects vertices onto a cylinder,
+    normalizes UV to [0,1].
+    """
+    verts = mesh.vertices.copy()
+    centroid = verts.mean(axis=0)
+    verts -= centroid
+    
+    x, y, z = verts[:, 0], verts[:, 1], verts[:, 2]
+    
+    # U = angle around Y axis, V = normalized height
+    u = (np.arctan2(x, z) / (2 * np.pi)) + 0.5
+    v_min, v_max = y.min(), y.max()
+    v = (y - v_min) / (v_max - v_min + 1e-8)
+    
+    uv = np.stack([u, v], axis=1).astype(np.float32)
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv)
+    return mesh
+
+
+def export_to_glb(mesh: trimesh.Trimesh, path: str) -> str:
+    """Exports a trimesh to GLB format."""
+    mesh.export(path)
+    return path

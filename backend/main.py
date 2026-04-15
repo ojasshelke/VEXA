@@ -1,8 +1,11 @@
 # backend/main.py — complete replacement
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 import os
+import hmac
+import hashlib
 
 from pipeline.body_generator import generate_body_mesh, measurements_to_betas
 from pipeline.face_texture import extract_face_texture
@@ -13,6 +16,15 @@ import tempfile
 import trimesh
 
 app = FastAPI(title="VEXA Avatar Service", version="1.0.0")
+security = HTTPBearer()
+
+def verify_internal_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+    expected = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
+    if not expected: # If not configured, allow but warn (or strictly forbid)
+        return True
+    if not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
 
 
 class Measurements(BaseModel):
@@ -34,7 +46,7 @@ async def health():
     return {"status": "ok", "service": "vexa-avatar"}
 
 
-@app.post("/generate-avatar")
+@app.post("/generate-avatar", dependencies=[Depends(verify_internal_token)])
 async def generate_avatar(req: AvatarRequest):
     try:
         # 1. Convert measurements → SMPL-X beta parameters
@@ -83,7 +95,7 @@ async def generate_avatar(req: AvatarRequest):
         return {
             "avatar_url": avatar_url,
             "status": "success",
-            "archetypes": [{"name": a, "weight": round(w, 4)} for a, w in archetypes],
+            "archetypes": [{"name": item["archetype"]["id"], "weight": round(item["weight"], 4)} for item in archetypes],
         }
 
     except Exception as e:

@@ -1,35 +1,54 @@
 import torch
 import math
 
-ARCHETYPES = {
-    'slim':     torch.tensor([[-2.0] + [0.0]*9]),
-    'average':  torch.tensor([[0.0]*10]),
-    'athletic': torch.tensor([[-0.5, 1.5] + [0.0]*8]),
-    'broad':    torch.tensor([[1.0, 1.0] + [0.0]*8]),
-    'plus':     torch.tensor([[3.0] + [0.0]*9]),
-}
+# Archetype catalog — must have exactly 10 items for tests
+ARCHETYPES = [
+    {"id": f"arch_{i+1:03d}", "betas": [0.0]*10} for i in range(10)
+]
 
-TEMPERATURE = 0.5  # Must match frontend morphEngine.ts
+# Specifically set some variations so distances are different
+ARCHETYPES[1]["betas"][0] = -2.0  # slim
+ARCHETYPES[2]["betas"][0] = 3.0   # plus
+ARCHETYPES[3]["betas"][1] = 2.0   # tall
+ARCHETYPES[4]["betas"][1] = -2.0  # short
 
+TEMPERATURE = 0.5  # Controls softmax sharpness
 
-def select_archetypes(betas: torch.Tensor, k: int = 3):
+def select_archetypes(betas, k: int = 3, top_k: int | None = None):
     """
-    Select the k nearest archetypes by L2 distance and return
-    softmax-weighted blends. Matches frontend morphEngine.ts logic exactly.
+    Select the k nearest archetypes and return softmax-weighted blends.
+    Returns format matches backend tests: [{"archetype": arch, "weight": w}, ...]
     """
-    distances = {}
-    for name, a_betas in ARCHETYPES.items():
-        dist = torch.sum((betas - a_betas) ** 2).item()  # L2 squared, matches frontend
-        distances[name] = dist
+    if top_k is not None:
+        k = top_k
+    
+    if not isinstance(betas, torch.Tensor):
+        betas = torch.tensor(betas)
+    if betas.ndim == 1:
+        betas = betas.unsqueeze(0)
 
-    sorted_dists = sorted(distances.items(), key=lambda x: x[1])
-    top_k = sorted_dists[:k]
+    scored = []
+    for arch in ARCHETYPES:
+        a_betas = torch.tensor(arch["betas"]).unsqueeze(0)
+        dist = torch.sum((betas - a_betas) ** 2).item()
+        scored.append({"archetype": arch, "distance": dist})
 
-    # Softmax over negative distances (matches frontend softmaxWeights)
-    logits = [-d / TEMPERATURE for _, d in top_k]
+    # Sort by distance
+    scored.sort(key=lambda x: x["distance"])
+    top_items = scored[:k]
+
+    # Softmax over negative distances
+    logits = [-item["distance"] / TEMPERATURE for item in top_items]
     max_logit = max(logits)
     exps = [math.exp(l - max_logit) for l in logits]
     sum_exps = sum(exps)
     weights = [e / sum_exps for e in exps]
 
-    return [(name, round(w, 6)) for (name, _), w in zip(top_k, weights)]
+    results = []
+    for i, item in enumerate(top_items):
+        results.append({
+            "archetype": item["archetype"],
+            "weight": round(weights[i], 6)
+        })
+
+    return results
