@@ -16,8 +16,8 @@ export const useUIStore = create<UIState>((set) => ({
   isMeasurementModalOpen: false,
   isFaceCaptureOpen: false,
   activeTab: 'overview',
-  setAvatarViewerOpen: (isAvatarViewerOpen) => set({ isAvatarViewerOpen }),
-  setMeasurementModalOpen: (isMeasurementModalOpen) => set({ isMeasurementModalOpen }),
-  setFaceCaptureOpen: (isFaceCaptureOpen) => set({ isFaceCaptureOpen }),
-  setActiveTab: (activeTab) => set({ activeTab }),
+  setAvatarViewerOpen: (isAvatarViewerOpen: boolean) => set({ isAvatarViewerOpen }),
+  setMeasurementModalOpen: (isMeasurementModalOpen: boolean) => set({ isMeasurementModalOpen }),
+  setFaceCaptureOpen: (isFaceCaptureOpen: boolean) => set({ isFaceCaptureOpen }),
+  setActiveTab: (activeTab: string) => set({ activeTab }),
 }))

@@ -19,21 +19,21 @@ interface AppState {
 
 export const useStore = create<AppState>((set) => ({
   userImage: null,
-  setUserImage: (image) => set({ userImage: image }),
+  setUserImage: (image: string | null) => set({ userImage: image }),
   selectedOutfit: null,
-  setSelectedOutfit: (outfit) => set({ selectedOutfit: outfit }),
+  setSelectedOutfit: (outfit: Outfit | null) => set({ selectedOutfit: outfit }),
   isProcessing: false,
-  setIsProcessing: (status) => set({ isProcessing: status }),
+  setIsProcessing: (status: boolean) => set({ isProcessing: status }),
   processingStep: '',
-  setProcessingStep: (step) => set({ processingStep: step }),
+  setProcessingStep: (step: string) => set({ processingStep: step }),
   tryOnResult: null,
-  setTryOnResult: (result) => set({ tryOnResult: result }),
+  setTryOnResult: (result: TryOnResult | null) => set({ tryOnResult: result }),
   favorites: [],
-  addFavorite: (result) => set((state) => {
+  addFavorite: (result: TryOnResult) => set((state) => {
     if (state.favorites.some(f => f.id === result.id)) return state;
     return { favorites: [...state.favorites, result] };
   }),
-  removeFavorite: (id) => set((state) => ({
+  removeFavorite: (id: string) => set((state) => ({
     favorites: state.favorites.filter((f) => f.id !== id)
   })),
 }));

@@ -15,9 +15,9 @@ export const useTryOnStore = create<TryOnState>((set) => ({
   results: {},
   selectedProduct: null,
   isProcessing: false,
-  setResult: (productId, result) =>
+  setResult: (productId: string, result: TryOnResult) =>
     set((state) => ({ results: { ...state.results, [productId]: result } })),
-  setSelectedProduct: (selectedProduct) => set({ selectedProduct }),
-  setProcessing: (isProcessing) => set({ isProcessing }),
+  setSelectedProduct: (selectedProduct: Product | null) => set({ selectedProduct }),
+  setProcessing: (isProcessing: boolean) => set({ isProcessing }),
   clearResults: () => set({ results: {} }),
 }))
