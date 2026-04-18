@@ -39,6 +39,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // 1. Authentication Check (Bearer Token)
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized: Bearer token required' }, { status: 401 });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase configuration missing');
+    }
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
+    }
+
+    // 2. IDOR Prevention: verify user is requesting session for themselves
+    if (body.userId !== user.id) {
+      return NextResponse.json({ error: 'Forbidden: Cannot create AR session for another user' }, { status: 403 });
+    }
+
     const supabase = getSupabase();
 
     const { error: insertError } = await supabase.from('usage_logs').insert({

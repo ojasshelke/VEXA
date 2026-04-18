@@ -27,27 +27,29 @@ async function checkRedisLimit(ip: string, limit: number, windowMs: number): Pro
 
   try {
     const key = `ratelimit:${ip}`;
-    // Simple INCR + EXPIRE logic via REST
-    const res = await fetch(`${url}/pipeline`, {
+    
+    // Atomic INCR + PEXPIRE via Lua script to avoid races
+    const luaScript = `
+      local current = redis.call("INCR", KEYS[1])
+      if current == 1 then
+        redis.call("PEXPIRE", KEYS[1], ARGV[1])
+      end
+      return current
+    `;
+
+    const res = await fetch(`${url}/eval`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify([
-        ['INCR', key],
-        ['PEXPIRE', key, windowMs],
-      ]),
+      body: JSON.stringify({
+        script: luaScript,
+        keys: [key],
+        args: [windowMs.toString()],
+      }),
     });
 
     if (!res.ok) return false;
     const data = await res.json();
-    
-    // Safety: If PEXPIRE failed, we should still return the count but be aware 
-    // the key might persist longer than intended. If INCR failed, we block nothing.
-    const count = data[0]?.result;
-    const ttlSuccess = data[1]?.result;
-
-    if (count !== undefined && !ttlSuccess) {
-      console.warn(`[RateLimit] Redis PEXPIRE failed for ${key}. Key may persist.`);
-    }
+    const count = data.result;
     
     return (count || 0) > limit;
   } catch (err) {

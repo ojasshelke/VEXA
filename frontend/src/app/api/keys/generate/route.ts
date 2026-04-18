@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { hashApiKey } from '@/lib/crypto';
+import { logAdminAction } from '@/lib/admin';
 
 export async function POST(req: Request) {
   try {
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
         marketplace_id: marketplaceId,
         marketplace_name: marketplace_name,
         key_hash: hashedKey,
-        monthly_limit: monthly_limit || 1000,
+        monthly_limit: monthly_limit || 10000,
         call_count: 0,
         status: 'active'
       });
@@ -52,7 +53,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // 4. Return raw key ONLY ONCE
+    // 4. Audit Log
+    await logAdminAction('GENERATE_API_KEY', '/api/keys/generate', marketplaceId, { 
+      marketplace_name, 
+      monthly_limit 
+    });
+
+    // 5. Return raw key ONLY ONCE
     return NextResponse.json({
       marketplace_id: marketplaceId,
       marketplace_name: marketplace_name,

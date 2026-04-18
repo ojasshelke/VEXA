@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { logAdminAction } from '@/lib/admin';
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,6 +38,9 @@ export async function POST(req: NextRequest) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // 2. Audit Log
+    await logAdminAction('REVOKE_API_KEY', '/api/keys/revoke', key_id);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

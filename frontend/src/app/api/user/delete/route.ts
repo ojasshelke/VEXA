@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { logAdminAction } from '@/lib/admin';
 
 export async function DELETE(req: NextRequest) {
   try {
@@ -73,6 +74,9 @@ export async function DELETE(req: NextRequest) {
     if (authDeleteError) {
       console.warn('GDPR: Failed to delete auth user, might require manual cleanup', authDeleteError.message);
     }
+
+    // 6. Audit Log
+    await logAdminAction('PURGE_USER', '/api/user/delete', userId);
 
     return NextResponse.json({ success: true, message: 'User data and assets fully purged.' });
 

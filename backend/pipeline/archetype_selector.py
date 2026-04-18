@@ -1,19 +1,15 @@
 import torch
 import math
 
-# Archetype catalog — 10 prototypical body shapes
-ARCHETYPES = [
-    {"id": "arch_001", "label": "Neutral",    "betas": [ 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_002", "label": "Athletic",   "betas": [ 1.5, -0.5,  2.0,  0.0,  1.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_003", "label": "Curvy",      "betas": [ 2.0,  0.5, -1.5,  3.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_004", "label": "Tall/Lean",  "betas": [-1.0,  2.5,  0.0, -1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_005", "label": "Petite",     "betas": [-2.0, -2.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_006", "label": "Broad",      "betas": [ 3.0,  0.0,  1.0,  0.0,  2.5,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_007", "label": "Slender",    "betas": [-1.5,  0.5, -0.5, -2.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_008", "label": "Stocky",     "betas": [ 2.5, -1.5,  3.0,  1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_009", "label": "Full",       "betas": [ 4.0,  0.0,  0.0,  2.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-    {"id": "arch_010", "label": "Soft",       "betas": [ 1.0,  0.0, -2.5,  1.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
-]
+import json
+import os
+
+# Single source of truth for archetypes (located in the frontend source)
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+shared_file = os.path.join(parent_dir, "frontend", "src", "data", "archetypes.json")
+
+with open(shared_file, "r") as f:
+    ARCHETYPES = json.load(f)
 
 TEMPERATURE = 0.5  # Controls softmax sharpness
 
