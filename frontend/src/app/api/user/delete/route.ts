@@ -4,6 +4,14 @@ import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 export async function DELETE(req: NextRequest) {
   try {
+    // 1. Authentication Check
+    const authHeader = req.headers.get('Authorization');
+    const adminSecret = process.env.VEXA_ADMIN_KEY;
+
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized — Admin token required' }, { status: 401 });
+    }
+
     const { userId } = await req.json();
 
     if (!userId) {

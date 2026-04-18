@@ -51,7 +51,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       console.warn('[/api/ar/session] usage_logs insert:', insertError.message);
     }
 
-    const token = `ar_${Date.now()}_${body.userId.slice(0, 8)}`;
+    const token = `ar_${crypto.randomUUID()}`;
     const payload: ARSessionResponse = {
       sessionToken: token,
       message: 'AR session started',

@@ -3,6 +3,14 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: NextRequest) {
   try {
+    // 1. Authentication Check
+    const authHeader = req.headers.get('Authorization');
+    const adminSecret = process.env.VEXA_ADMIN_KEY;
+
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized — Admin token required' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { key_id } = body;
 
