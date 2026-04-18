@@ -6,12 +6,24 @@ import tempfile
 import os
 
 
-def download_image(url: str) -> np.ndarray:
-    resp = urllib.request.urlopen(url, timeout=30)
-    image = np.asarray(bytearray(resp.read()), dtype="uint8")
-    image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+import base64
+import re
+
+def download_image(url_or_base64: str) -> np.ndarray:
+    # Check if it's a data URL (base64)
+    if url_or_base64.startswith("data:"):
+        header, encoded = url_or_base64.split(",", 1)
+        data = base64.b64decode(encoded)
+        image = np.frombuffer(data, dtype="uint8")
+        image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+    else:
+        # Standard URL
+        resp = urllib.request.urlopen(url_or_base64, timeout=30)
+        image = np.asarray(bytearray(resp.read()), dtype="uint8")
+        image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+    
     if image is None:
-        raise ValueError("Failed to decode image from URL")
+        raise ValueError("Failed to decode image. Ensure it is a valid URL or base64 string.")
     return image
 
 

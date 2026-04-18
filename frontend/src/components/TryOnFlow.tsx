@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/store/useStore";
 import { Sparkles, Wand2, Activity, Scan, Maximize } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 const STEPS = [
   { id: 'analyzing', text: "Analyzing body proportions...", icon: Scan },
@@ -16,7 +17,7 @@ export default function TryOnFlow() {
   const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
-    if (!isProcessing) return;
+    if (!isProcessing || !userPhotoUrl || !selectedOutfit) return;
 
     let stepInterval: NodeJS.Timeout;
     let currentStepIndex = 0;
@@ -31,25 +32,38 @@ export default function TryOnFlow() {
       }, 1500);
 
       try {
+        // Get session token for auth
+        const { data: { session } } = await supabase.auth.getSession();
+        
         const response = await fetch('/api/tryon', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+          },
           body: JSON.stringify({
-            userId: currentUser?.id ?? 'demo_user_001',
+            userId: currentUser?.id ?? session?.user?.id ?? 'demo_user_001',
             userPhotoUrl: userPhotoUrl,
             productId: selectedOutfit?.id,
             productImageUrl: selectedOutfit?.imageUrl
           })
         });
 
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Error ${response.status}: Failed to process try-on`);
+        }
+
         const data = await response.json();
         
-        if (data.resultUrl && selectedOutfit && userPhotoUrl) {
-          // Slight delay to see the final step text clearly
+        if (data.resultUrl) {
+          // Animated delay to reach 100% and show completion
+          setCurrentStep(STEPS.length - 1);
+          
           setTimeout(() => {
             setTryOnResult({
               id: `${Date.now()}`,
-              userId: currentUser?.id ?? 'demo_user_001',
+              userId: currentUser?.id ?? session?.user?.id ?? 'demo_user_001',
               productId: selectedOutfit.id,
               originalImage: userPhotoUrl,
               resultImage: data.resultUrl,
@@ -59,20 +73,27 @@ export default function TryOnFlow() {
             });
             setIsProcessing(false);
             setCurrentStep(0);
-          }, 600);
+          }, 800);
+        } else {
+          throw new Error("No result URL received from the engine");
         }
       } catch (error) {
-        console.error("Try-on failed", error);
+        console.error("Try-on failed:", error);
+        // Show error more gracefully - for now just reset
         setIsProcessing(false);
         setCurrentStep(0);
+        // We could add an alert here
+        alert(error instanceof Error ? error.message : "AI engine is currently busy. Please try again in a moment.");
       } finally {
-        clearInterval(stepInterval);
+        if (stepInterval) clearInterval(stepInterval);
       }
     };
 
     processTryOn();
     
-    return () => clearInterval(stepInterval);
+    return () => {
+      if (stepInterval) clearInterval(stepInterval);
+    };
   }, [isProcessing, userPhotoUrl, selectedOutfit, setIsProcessing, setTryOnResult, currentUser]);
 
   if (!isProcessing) return null;

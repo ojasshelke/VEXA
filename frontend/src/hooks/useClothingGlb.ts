@@ -26,9 +26,33 @@ export function useClothingGlb(
   useEffect(() => {
     if (!productId || !productImageUrl) return;
 
+    let pollInterval: NodeJS.Timeout | null = null;
+
+    const startPolling = (taskId: string) => {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/clothing/status/${taskId}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.status === 'ready' && data.glbUrl) {
+            setGlbUrl(data.glbUrl);
+            setIsLoading(false);
+            if (pollInterval) clearInterval(pollInterval);
+          } else if (data.status === 'failed') {
+            setError('Clothing generation failed');
+            setIsLoading(false);
+            if (pollInterval) clearInterval(pollInterval);
+          }
+        } catch (e) {
+          console.error('Polling error:', e);
+        }
+      }, 3000);
+    };
+
     const generate = async () => {
       setIsLoading(true);
       setError(null);
+      setGlbUrl(null);
       try {
         const res = await fetch('/api/clothing', {
           method: 'POST',
@@ -39,22 +63,32 @@ export function useClothingGlb(
             category,
           }),
         });
-        const data: ClothingApiJson = await res.json();
+        const data = await res.json();
+        
         if (!res.ok) {
-          throw new Error(data.error ?? 'Failed to generate clothing mesh');
+          throw new Error(data.error ?? 'Failed to initiate clothing generation');
         }
-        if (!data.glbUrl) {
-          throw new Error('No GLB URL in response');
+
+        if (data.glbUrl) {
+          setGlbUrl(data.glbUrl);
+          setIsLoading(false);
+        } else if (data.taskId) {
+          // Task initiated, start polling
+          startPolling(data.taskId);
+        } else {
+          throw new Error('Invalid response from clothing API');
         }
-        setGlbUrl(data.glbUrl);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : String(err));
-      } finally {
         setIsLoading(false);
       }
     };
 
     void generate();
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, [productId, productImageUrl, category]);
 
   return { glbUrl, isLoading, error };

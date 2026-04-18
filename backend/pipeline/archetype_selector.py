@@ -5,8 +5,9 @@ import json
 import os
 
 # Single source of truth for archetypes (located in the frontend source)
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-shared_file = os.path.join(parent_dir, "frontend", "src", "data", "archetypes.json")
+# __file__ is backend/pipeline/archetype_selector.py -> root is 3 levels up
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+shared_file = os.path.join(root_dir, "frontend", "src", "data", "archetypes.json")
 
 with open(shared_file, "r") as f:
     ARCHETYPES = json.load(f)

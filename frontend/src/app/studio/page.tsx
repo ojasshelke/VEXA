@@ -9,10 +9,10 @@ import { useStore } from "@/store/useStore";
 import { Sparkles, ArrowRight } from "lucide-react";
 
 export default function Home() {
-  const { userImage, selectedOutfit, setIsProcessing, tryOnResult } = useStore();
+  const { userImage, userPhotoUrl, selectedOutfit, setIsProcessing, tryOnResult } = useStore();
 
   const handleTryOn = () => {
-    if (userImage && selectedOutfit) {
+    if (userImage && selectedOutfit && userPhotoUrl) {
       setIsProcessing(true);
     }
   };
@@ -65,20 +65,20 @@ export default function Home() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  disabled={!userImage || !selectedOutfit}
+                  disabled={!userImage || !selectedOutfit || !userPhotoUrl}
                   onClick={handleTryOn}
                   className={`
                     group relative overflow-hidden rounded-full font-medium tracking-wide text-lg px-12 py-5 shadow-2xl transition-all duration-500
                     flex items-center gap-3 w-full sm:w-auto min-w-[300px] justify-center
-                    ${userImage && selectedOutfit 
+                    ${userImage && selectedOutfit && userPhotoUrl
                       ? 'bg-gradient-to-r from-[#bef264] to-[#a3e635] text-white cursor-pointer hover:shadow-[0_0_40px_rgba(139,92,246,0.6)] box-glow' 
                       : 'bg-white/10 text-white/30 cursor-not-allowed border-none'}
                   `}
                 >
-                  <div className={`absolute inset-0 bg-white/20 translate-y-full transition-transform duration-500 rounded-full ${userImage && selectedOutfit ? 'group-hover:translate-y-0' : ''}`} />
+                  <div className={`absolute inset-0 bg-white/20 translate-y-full transition-transform duration-500 rounded-full ${userImage && selectedOutfit && userPhotoUrl ? 'group-hover:translate-y-0' : ''}`} />
                   
                   <span className="relative z-10 flex items-center justify-center gap-2">
-                    <Sparkles className={`w-5 h-5 ${userImage && selectedOutfit ? 'animate-pulse' : ''}`} />
+                    <Sparkles className={`w-5 h-5 ${userImage && selectedOutfit && userPhotoUrl ? 'animate-pulse' : ''}`} />
                     Virtual Try-On
                     <ArrowRight className="w-5 h-5 ml-1 transition-transform group-hover:translate-x-1" />
                   </span>

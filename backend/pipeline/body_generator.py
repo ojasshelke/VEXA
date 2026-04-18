@@ -2,6 +2,7 @@ import torch
 import trimesh
 import smplx
 import numpy as np
+import os
 
 
 def measurements_to_betas(measurements) -> torch.Tensor:
@@ -32,8 +33,33 @@ def measurements_to_betas(measurements) -> torch.Tensor:
 
 
 def generate_body_mesh(measurements) -> trimesh.Trimesh:
+    model_path = os.getenv('SMPLX_MODEL_PATH', 'models/')
+    
+    # Fallback to primitives if models are missing
+    if not os.path.exists(model_path):
+        import logging
+        logging.getLogger("vexa").warning(f"SMPL-X models missing at {model_path}. Generating primitive fallback.")
+        
+        # Simple blocky humanoid for fallback
+        head = trimesh.creation.uv_sphere(radius=0.15)
+        head.apply_translation([0, 1.65, 0])
+        
+        torso = trimesh.creation.box(extents=[0.4, 0.6, 0.2])
+        torso.apply_translation([0, 1.15, 0])
+        
+        leg_l = trimesh.creation.box(extents=[0.12, 0.8, 0.12])
+        leg_l.apply_translation([-0.12, 0.4, 0])
+        
+        leg_r = trimesh.creation.box(extents=[0.12, 0.8, 0.12])
+        leg_r.apply_translation([0.12, 0.4, 0])
+        
+        mesh = trimesh.util.concatenate([head, torso, leg_l, leg_r])
+        # Add minimal UVs to allow texture visual to not crash
+        mesh.visual = trimesh.visual.TextureVisuals(uv=np.zeros((len(mesh.vertices), 2)))
+        return mesh
+
     model = smplx.create(
-        model_path='models/',
+        model_path=model_path,
         model_type='smplx',
         gender='neutral',
         use_face_contour=False,

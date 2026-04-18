@@ -4,6 +4,7 @@ import { motion, Variants } from "framer-motion";
 import { useStore } from "@/store/useStore";
 import { Outfit } from "@/types";
 import { Check, Loader2 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 const OUTFITS: Outfit[] = [
   {
@@ -84,26 +85,32 @@ export default function OutfitSelection() {
         }))
       };
 
-      fetch('/api/tryon/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-      .then(res => res.json())
-      .then(data => {
-        const resultsMap: Record<string, string> = {};
-        if (Array.isArray(data)) {
-          data.forEach((item: { productId: string, resultUrl: string }) => {
-            if (item.resultUrl) {
-              resultsMap[item.productId] = item.resultUrl;
-            }
-          });
-        }
-        setBatchResults(resultsMap);
-      })
-      .catch(console.error)
-      .finally(() => {
-        setIsBatchPending(false);
+      // Get session for auth
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        fetch('/api/tryon/batch', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify(payload)
+        })
+        .then(res => res.json())
+        .then(data => {
+          const resultsMap: Record<string, string> = {};
+          if (Array.isArray(data)) {
+            data.forEach((item: { productId: string, resultUrl: string }) => {
+              if (item.resultUrl) {
+                resultsMap[item.productId] = item.resultUrl;
+              }
+            });
+          }
+          setBatchResults(resultsMap);
+        })
+        .catch(console.error)
+        .finally(() => {
+          setIsBatchPending(false);
+        });
       });
     }
   }, [currentUser, userPhotoUrl]);

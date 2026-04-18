@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { ShoppingCart, Ruler, Box, ArrowLeft, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { AvatarViewer } from '@/components/AvatarViewer';
+import { AvatarCarousel } from '@/components/AvatarCarousel';
 import { useClothingGlb } from '@/hooks/useClothingGlb';
 
 /** Public fallback GLB — full URL, not a local path */
@@ -119,22 +120,25 @@ export default function ProductDetailPage() {
       </button>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-start">
-        {/* Left: Large Image (Try-on result) */}
+        {/* Left: Premium Avatar Carousel */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="relative aspect-[3/4] w-full max-w-lg mx-auto lg:mx-0 glass-panel rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(190,242,100,0.1)] border border-white/10"
+          className="w-full"
         >
-          <img
-            src={displayImage}
-            alt={selectedOutfit.name}
-            className="w-full h-full object-cover"
+          <AvatarCarousel 
+            avatarUrl={avatarUrl}
+            outfits={selectedOutfit ? [
+                {
+                    id: selectedOutfit.id,
+                    name: selectedOutfit.name,
+                    brand: selectedOutfit.brand || 'VEXA Selection',
+                    glbUrl: clothingGlbUrl || '',
+                    imageUrl: selectedOutfit.imageUrl
+                }
+            ].filter(o => o.glbUrl) : []}
+            className="w-full"
           />
-          {tryOnResult && (
-            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-[#bef264] border border-[#bef264]/20 flex items-center gap-1.5">
-              <span>Personalized Try-On</span>
-            </div>
-          )}
         </motion.div>
 
         {/* Right: Details & Features */}
@@ -180,20 +184,15 @@ export default function ProductDetailPage() {
               )}
             </div>
 
-            {/* 3D Viewer Panel */}
-            <div className="glass-panel p-0 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-white/10 min-h-[240px]">
-              {is3DLoading ? (
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="w-6 h-6 text-[#bef264] animate-spin" />
-                  <p className="text-white/40 text-xs">Loading 3D view…</p>
-                </div>
-              ) : (
-                <AvatarViewer
-                  avatarUrl={clothingGlbUrl || avatarUrl || FALLBACK_AVATAR_URL}
-                  className="w-full h-full min-h-[240px]"
-                  showControls={false}
-                />
-              )}
+            {/* Fit Confidence Panel */}
+            <div className="glass-panel p-5 rounded-2xl flex flex-col gap-3 relative overflow-hidden border border-white/10 bg-gradient-to-br from-white/5 to-transparent">
+              <div className="flex items-center gap-2 text-white/60 font-semibold uppercase tracking-wider text-xs">
+                <Box className="w-4 h-4 text-[#bef264]" />
+                Physics Accuracy
+              </div>
+              <p className="text-white text-sm">
+                Real-time fabric draping enabled. Toggle 3D view in the carousel to inspect the fit from any angle.
+              </p>
             </div>
           </div>
 
