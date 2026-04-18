@@ -261,7 +261,7 @@ export async function handleTryOn(
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-  if (isRateLimited(ip, 10)) {
+  if (await isRateLimited(ip, 10)) {
     return NextResponse.json({ error: 'Too many requests. Please wait 60 seconds.' }, { status: 429 });
   }
 
