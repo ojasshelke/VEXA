@@ -41,9 +41,35 @@ function OnboardingWizard() {
     }, 8000);
 
     try {
+      // Resize image to max 1024px
+      const processedBlob = await new Promise<Blob>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const max = 768;
+            if (width > height) {
+              if (width > max) { height *= max / width; width = max; }
+            } else {
+              if (height > max) { width *= max / height; height = max; }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx?.drawImage(img, 0, 0, width, height);
+            canvas.toBlob((blob) => resolve(blob || photoFile!), 'image/jpeg', 0.6);
+          };
+          img.src = e.target?.result as string;
+        };
+        reader.readAsDataURL(photoFile!);
+      });
+
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.readAsDataURL(photoFile!);
+        reader.readAsDataURL(processedBlob);
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = reject;
       });

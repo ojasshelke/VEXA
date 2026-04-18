@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import type { MarketplaceContext } from '@/types';
-import type { ApiKeyRow } from '@/types/database';
+import type { ApiKeyRow, Database } from '@/types/database';
 import { hashApiKey } from './crypto';
 
 export const VEXA_KEY_HEADER = 'x-vexa-key';
@@ -25,7 +25,7 @@ function getServiceSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase env vars missing');
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createClient<Database>(url, key, { auth: { persistSession: false } });
 }
 
 /**
@@ -67,17 +67,17 @@ export async function validateApiKey(
       .select('marketplace_id, marketplace_name, webhook_url, created_at, status')
       .eq('key_hash', hashedKey)
       .eq('status', 'active')
-      .returns<Pick<ApiKeyRow, 'marketplace_id' | 'marketplace_name' | 'webhook_url' | 'created_at' | 'status'>>()
       .single();
 
     if (error || !data) return null;
 
+    const keyData = data as ApiKeyRow;
     return {
-      marketplaceId: data.marketplace_id,
-      name: data.marketplace_name,
+      marketplaceId: keyData.marketplace_id,
+      name: keyData.marketplace_name,
       apiKey: rawKey, // never log this
-      webhookUrl: data.webhook_url ?? undefined,
-      createdAt: data.created_at,
+      webhookUrl: keyData.webhook_url ?? undefined,
+      createdAt: keyData.created_at,
     };
   } catch {
     return null;

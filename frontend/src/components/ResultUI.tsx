@@ -81,11 +81,10 @@ export default function ResultUI() {
   }, [currentUser, selectedOutfit]);
 
   useEffect(() => {
-    if (selectedOutfit && currentUser?.id && userPhotoUrl) {
-      fetchTryOn();
+    if (selectedOutfit && currentUser?.id) {
       fetchSize();
     }
-  }, [selectedOutfit, currentUser, userPhotoUrl, fetchTryOn, fetchSize]);
+  }, [selectedOutfit, currentUser, fetchSize]);
 
   const isFavorited = favorites.some(f => f.id === tryOnResult?.id);
 
@@ -113,38 +112,9 @@ export default function ResultUI() {
     return () => window.removeEventListener("pointerup", handlePointerUp);
   }, [isDragging]);
 
-  if (!currentUser?.id || !userPhotoUrl || !selectedOutfit) return null;
-
-  if (isLoading) {
-    return (
-      <div className="w-full flex-1 flex flex-col items-center justify-center min-h-[400px]">
-        <div className="w-16 h-16 border-4 border-[#bef264]/20 border-t-[#bef264] rounded-full animate-spin mb-6" />
-        <h3 className="text-xl font-medium text-white mb-2">Generating Try-On...</h3>
-        <p className="text-white/60">This process takes 20-40 seconds</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="w-full flex-1 flex flex-col items-center justify-center min-h-[400px]">
-        <div className="p-4 rounded-full bg-rose-500/20 mb-6">
-          <AlertCircle className="w-10 h-10 text-rose-400" />
-        </div>
-        <h3 className="text-xl font-medium text-white mb-2">Try-On Failed</h3>
-        <p className="text-white/60 mb-6">{error}</p>
-        <button 
-          onClick={() => { fetchTryOn(); fetchSize(); }}
-          className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all flex items-center gap-2"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Retry Try-On
-        </button>
-      </div>
-    );
-  }
-
   if (!tryOnResult) return null;
+
+  const outfit = tryOnResult.outfit;
 
   return (
     <motion.div 
@@ -167,8 +137,6 @@ export default function ResultUI() {
         <button 
           onClick={() => {
             setTryOnResult(null);
-            fetchTryOn();
-            fetchSize();
           }}
           className="p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-colors text-white/70 hover:text-white"
         >
@@ -193,12 +161,14 @@ export default function ResultUI() {
               transition={{ duration: 1.2, ease: "easeOut" }}
               className="absolute inset-0 w-full h-full"
             >
-              <img 
-                src={tryOnResult.resultImage!} 
-                className="w-full h-full object-cover relative z-10" 
-                alt="AI Generated Result"
-                draggable={false}
-              />
+              {tryOnResult.resultImage && (
+                <img 
+                  src={tryOnResult.resultImage} 
+                  className="w-full h-full object-cover relative z-10" 
+                  alt="AI Generated Result"
+                  draggable={false}
+                />
+              )}
               <div className="absolute inset-0 shadow-[inset_0_0_20px_rgba(255,255,255,0.05)] z-20 pointer-events-none" />
             </motion.div>
             
@@ -206,13 +176,15 @@ export default function ResultUI() {
               className="absolute inset-0 h-full overflow-hidden border-r-2 border-[#bef264] z-30 shadow-[4px_0_15px_-3px_rgba(0,0,0,0.5)]"
               style={{ width: `${sliderPosition}%` }}
             >
-              <img 
-                src={tryOnResult.originalImage!} 
-                className="w-full h-full object-cover max-w-none" 
-                style={{ width: containerRef.current?.offsetWidth || '100%' }}
-                alt="Original Upload"
-                draggable={false}
-              />
+              {tryOnResult.originalImage && (
+                <img 
+                  src={tryOnResult.originalImage} 
+                  className="w-full h-full object-cover max-w-none" 
+                  style={{ width: containerRef.current?.offsetWidth || '100%' }}
+                  alt="Original Upload"
+                  draggable={false}
+                />
+              )}
             </div>
 
             <div 
@@ -258,20 +230,24 @@ export default function ResultUI() {
             <h3 className="text-sm font-semibold tracking-wide text-white/60 uppercase mb-4">Garment Used</h3>
             
             <div className="flex gap-4">
-              <img 
-                src={tryOnResult.outfit?.imageUrl!} 
-                className="w-16 h-20 object-cover rounded-lg bg-white/5 border border-white/10 my-auto shadow-md" 
-                alt={tryOnResult.outfit?.name!} 
-              />
+              {outfit?.imageUrl && (
+                <img 
+                  src={outfit.imageUrl} 
+                  className="w-16 h-20 object-cover rounded-lg bg-white/5 border border-white/10 my-auto shadow-md" 
+                  alt={outfit.name || 'Outfit'} 
+                />
+              )}
               <div className="flex-1 min-w-0 py-1">
-                <span className="text-[10px] uppercase tracking-wider text-[#d9f99d] block font-medium mb-1 border border-[#d9f99d]/30 bg-[#bef264]/10 w-fit px-1.5 py-0.5 rounded">
-                  {tryOnResult.outfit?.category!}
-                </span>
+                {outfit?.category && (
+                  <span className="text-[10px] uppercase tracking-wider text-[#d9f99d] block font-medium mb-1 border border-[#d9f99d]/30 bg-[#bef264]/10 w-fit px-1.5 py-0.5 rounded">
+                    {outfit.category}
+                  </span>
+                )}
                 <h4 className="text-white font-medium text-sm mb-1 truncate">
-                  {tryOnResult.outfit?.name!}
+                  {outfit?.name || 'Vexa Selection'}
                 </h4>
                 <div className="text-white/80 text-sm font-medium">
-                  ${tryOnResult.outfit?.price.toFixed(2)!}
+                  ${(outfit?.price || 0).toFixed(2)}
                 </div>
               </div>
             </div>

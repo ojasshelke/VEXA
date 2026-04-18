@@ -57,6 +57,7 @@ export function useUser(): UseUserState {
           shoulder_width: null,
           avatar_url: null,
           face_texture_url: null,
+          marketplace_id: null,
           created_at: new Date().toISOString(),
         };
         setState({ user: fallback, isLoading: false, error: null });

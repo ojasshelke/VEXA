@@ -15,7 +15,7 @@ export interface UserRow {
   shoulder_width: number | null;
   avatar_url: string | null;
   face_texture_url: string | null;
-  marketplace_id?: string | null;
+  marketplace_id: string | null;
   created_at: string;
 }
 

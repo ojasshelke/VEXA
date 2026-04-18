@@ -57,23 +57,19 @@ export default function TryOnFlow() {
         const data = await response.json();
         
         if (data.resultUrl) {
-          // Animated delay to reach 100% and show completion
-          setCurrentStep(STEPS.length - 1);
-          
-          setTimeout(() => {
-            setTryOnResult({
-              id: `${Date.now()}`,
-              userId: currentUser?.id ?? session?.user?.id ?? 'demo_user_001',
-              productId: selectedOutfit.id,
-              originalImage: userPhotoUrl,
-              resultImage: data.resultUrl,
-              outfit: selectedOutfit,
-              aiAnalysis: data.aiAnalysis,
-              status: 'ready'
-            });
-            setIsProcessing(false);
-            setCurrentStep(0);
-          }, 800);
+          // Immediately show result and hide processor
+          setTryOnResult({
+            id: `${Date.now()}`,
+            userId: currentUser?.id ?? session?.user?.id ?? 'demo_user_001',
+            productId: selectedOutfit.id,
+            originalImage: userPhotoUrl,
+            resultImage: data.resultUrl,
+            outfit: selectedOutfit,
+            aiAnalysis: data.aiAnalysis,
+            status: 'ready'
+          });
+          setIsProcessing(false);
+          setCurrentStep(0);
         } else {
           throw new Error("No result URL received from the engine");
         }

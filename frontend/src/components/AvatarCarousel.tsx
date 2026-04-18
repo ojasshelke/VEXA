@@ -22,7 +22,7 @@ export function AvatarCarousel({ avatarUrl, outfits = [], className = '' }: Avat
   const [viewMode, setViewMode] = useState<'3d' | 'image'>('3d');
 
   const items = [
-    { type: 'base', glbUrl: avatarUrl, name: 'Natural Body', description: 'Your precise 3D topology' },
+    { type: 'base', glbUrl: avatarUrl, name: 'Natural Body', description: 'Your precise 3D topology', imageUrl: undefined },
     ...outfits.map(o => ({ type: 'outfit', glbUrl: o.glbUrl, name: o.name, description: o.brand, imageUrl: o.imageUrl }))
   ].filter(item => item.glbUrl);
 

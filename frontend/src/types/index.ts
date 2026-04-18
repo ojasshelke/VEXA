@@ -148,6 +148,7 @@ export type ProductCategory = 'clothing' | 'shoes' | 'hats' | 'jewelry' | 'bags'
 export interface Outfit {
   id: string;
   name: string;
+  brand?: string;
   price: number;
   imageUrl: string;
   category: ProductCategory;

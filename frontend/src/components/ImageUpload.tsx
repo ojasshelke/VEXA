@@ -70,30 +70,83 @@ export default function ImageUpload() {
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
     
+    // 0. Resize image to max 1024px for performance and API limits
+    const resizeImage = (imgFile: File): Promise<Blob> => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const max = 768;
+            
+            if (width > height) {
+              if (width > max) {
+                height *= max / width;
+                width = max;
+              }
+            } else {
+              if (height > max) {
+                width *= max / height;
+                height = max;
+              }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx?.drawImage(img, 0, 0, width, height);
+            canvas.toBlob((blob) => resolve(blob || imgFile), 'image/jpeg', 0.6);
+          };
+          img.src = e.target?.result as string;
+        };
+        reader.readAsDataURL(imgFile);
+      });
+    };
+
+    const processedBlob = await resizeImage(file);
+    const processedFile = new File([processedBlob], file.name, { type: 'image/jpeg' });
+
     // 1. Set local preview immediately
     const reader = new FileReader();
     reader.onload = (event) => {
-      setUserImage(event.target?.result as string);
+      const result = event.target?.result as string;
+      setUserImage(result);
+      // Fallback: set photo URL to base64 immediately so button is clickable
+      setUserPhotoUrl(result);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(processedFile);
 
-    // 2. Upload to Supabase for backend access
+    // 2. Upload to our API (Cloudflare R2)
     setIsUploading(true);
     try {
-      const fileName = `temp_${currentUser?.id || 'guest'}_${Date.now()}.jpg`;
-      const { data, error } = await supabase.storage
-        .from('avatars')
-        .upload(`uploads/${fileName}`, file, { cacheControl: '3600', upsert: true });
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const formData = new FormData();
+      formData.append('file', processedFile);
 
-      if (error) throw error;
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+        },
+        body: formData
+      });
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(data.path);
+      if (!res.ok) {
+        throw new Error(`Upload API failed: ${res.status}`);
+      }
 
-      setUserPhotoUrl(publicUrl);
+      const uploadData = await res.json();
+      if (uploadData.url) {
+        // Overwrite base64 with cleaner permanent URL
+        setUserPhotoUrl(uploadData.url);
+      }
     } catch (err) {
-      console.error("Upload failed", err);
+      console.warn("Server upload failed, using local data URL instead:", err);
+      // Keep using the base64 preview set in step 1
     } finally {
       setIsUploading(false);
     }
