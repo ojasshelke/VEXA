@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import type { MarketplaceContext } from '@/types';
 import type { ApiKeyRow } from '@/types/database';
+import { hashApiKey } from './crypto';
 
 export const VEXA_KEY_HEADER = 'x-vexa-key';
 export const MARKETPLACE_CTX_HEADER = 'x-vexa-marketplace-id';
@@ -19,13 +20,6 @@ export const MARKETPLACE_CTX_HEADER = 'x-vexa-marketplace-id';
  * SHA-256 hash of the raw API key.
  * Only the hash is stored in the DB — the raw key is never persisted.
  */
-async function hashApiKey(rawKey: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(rawKey);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 function getServiceSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
