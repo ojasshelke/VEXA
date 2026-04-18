@@ -39,9 +39,17 @@ async function checkRedisLimit(ip: string, limit: number, windowMs: number): Pro
 
     if (!res.ok) return false;
     const data = await res.json();
-    const count = data[0]?.result;
     
-    return count > limit;
+    // Safety: If PEXPIRE failed, we should still return the count but be aware 
+    // the key might persist longer than intended. If INCR failed, we block nothing.
+    const count = data[0]?.result;
+    const ttlSuccess = data[1]?.result;
+
+    if (count !== undefined && !ttlSuccess) {
+      console.warn(`[RateLimit] Redis PEXPIRE failed for ${key}. Key may persist.`);
+    }
+    
+    return (count || 0) > limit;
   } catch (err) {
     console.error('[RateLimit] Redis failure, falling back to local memory:', err);
     return false;

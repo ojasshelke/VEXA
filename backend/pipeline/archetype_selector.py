@@ -1,16 +1,19 @@
 import torch
 import math
 
-# Archetype catalog — must have exactly 10 items for tests
+# Archetype catalog — 10 prototypical body shapes
 ARCHETYPES = [
-    {"id": f"arch_{i+1:03d}", "betas": [0.0]*10} for i in range(10)
+    {"id": "arch_001", "label": "Neutral",    "betas": [ 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_002", "label": "Athletic",   "betas": [ 1.5, -0.5,  2.0,  0.0,  1.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_003", "label": "Curvy",      "betas": [ 2.0,  0.5, -1.5,  3.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_004", "label": "Tall/Lean",  "betas": [-1.0,  2.5,  0.0, -1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_005", "label": "Petite",     "betas": [-2.0, -2.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_006", "label": "Broad",      "betas": [ 3.0,  0.0,  1.0,  0.0,  2.5,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_007", "label": "Slender",    "betas": [-1.5,  0.5, -0.5, -2.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_008", "label": "Stocky",     "betas": [ 2.5, -1.5,  3.0,  1.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_009", "label": "Full",       "betas": [ 4.0,  0.0,  0.0,  2.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
+    {"id": "arch_010", "label": "Soft",       "betas": [ 1.0,  0.0, -2.5,  1.5,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]},
 ]
-
-# Specifically set some variations so distances are different
-ARCHETYPES[1]["betas"][0] = -2.0  # slim
-ARCHETYPES[2]["betas"][0] = 3.0   # plus
-ARCHETYPES[3]["betas"][1] = 2.0   # tall
-ARCHETYPES[4]["betas"][1] = -2.0  # short
 
 TEMPERATURE = 0.5  # Controls softmax sharpness
 
