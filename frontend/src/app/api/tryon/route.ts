@@ -133,39 +133,31 @@ async function uploadDataUrl(
 }
 
 /**
- * Uploads a buffer or URL to the Hugging Face Space directly.
- * This ensures the AI can see the image even if R2/Supabase is broken.
+ * Converts a URL or Buffer to a base64 string formatted for Gradio Data injection.
  */
-async function uploadToHF(
-  source: string | Buffer,
-  hfKey: string
-): Promise<{ path: string; url: string } | null> {
+async function toGradioBase64(source: string | Buffer): Promise<string | null> {
   try {
-    const formData = new FormData();
+    let buffer: Buffer;
+    let mime = 'image/png';
+
     if (typeof source === 'string' && source.startsWith('data:')) {
-      const base64 = source.split(',')[1];
-      const blob = new Blob([new Uint8Array(Buffer.from(base64, 'base64'))], { type: 'image/png' });
-      formData.append('files', blob, 'image.png');
+      const parts = source.split(',');
+      mime = parts[0].split(':')[1].split(';')[0];
+      buffer = Buffer.from(parts[1], 'base64');
     } else if (Buffer.isBuffer(source)) {
-      const blob = new Blob([new Uint8Array(source)], { type: 'image/png' });
-      formData.append('files', blob, 'image.png');
+      buffer = source;
     } else if (typeof source === 'string' && source.startsWith('http')) {
       const res = await fetch(source);
-      const blob = await res.blob();
-      formData.append('files', blob, 'image.png');
+      if (!res.ok) return null;
+      const ab = await res.arrayBuffer();
+      buffer = Buffer.from(ab);
+      mime = res.headers.get('content-type') || 'image/png';
+    } else {
+      return null;
     }
 
-    const response = await fetch('https://yisol-idm-vton.hf.space/upload', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${hfKey}` },
-      body: formData
-    });
-
-    if (!response.ok) throw new Error(`HF Upload failed: ${response.status}`);
-    const result = await response.json();
-    return { path: result[0], url: `https://yisol-idm-vton.hf.space/file=${result[0]}` };
+    return `data:${mime};base64,${buffer.toString('base64')}`;
   } catch (e) {
-    console.error('[/api/tryon] HF Upload error:', (e as Error).message);
     return null;
   }
 }
@@ -210,7 +202,7 @@ export async function handleTryOn(
     .single();
 
   const cached = cachedRecord as CachedTryOnRow | null;
-  if (cached?.result_url) {
+  if (cached?.result_url && cached.result_url !== 'base64_fallback') {
     let finalUrl = cached.result_url;
     if (!finalUrl.startsWith('http')) {
       const { data: signedData } = await supabase.storage.from('avatars').createSignedUrl(finalUrl, 3600);
@@ -227,47 +219,42 @@ export async function handleTryOn(
     };
   }
 
-  // 2. Try HF Space AI engine (Direct Upload Path)
+  // 2. Try HF Space AI engine (Direct Base64 Injection)
   const SPACE_URL = 'https://yisol-idm-vton.hf.space';
   const authHeaders = { Authorization: `Bearer ${hfKey}` };
   let arrayBuffer: ArrayBuffer | null = null;
   
   if (hfKey && userPhotoUrl && productImageUrl) {
     try {
-      console.log('[/api/tryon] Starting AI Engine via Direct HF Upload...');
+      console.log('[/api/tryon] Starting AI Engine via Base64 Injection...');
       
-      // Upload images to HF explicitly for reliability
-      const [hfUserImg, hfGarmImg] = await Promise.all([
-        uploadToHF(userPhotoUrl, hfKey),
-        uploadToHF(productImageUrl, hfKey)
+      const [b64User, b64Garm] = await Promise.all([
+        toGradioBase64(userPhotoUrl),
+        toGradioBase64(productImageUrl)
       ]);
 
-      if (!hfUserImg || !hfGarmImg) throw new Error('Failed to upload assets to AI cluster');
+      if (!b64User || !b64Garm) throw new Error('Failed to encode assets for AI cluster');
 
       const sessionHash = Math.random().toString(36).substring(2, 15);
       
-      // Start Gradio Prediction
       const joinResponse = await fetch(`${SPACE_URL}/queue/join`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           data: [
             { 
-              "background": { "path": hfUserImg.path, "meta": { "_type": "gradio.FileData" } }, 
+              "background": { "data": b64User, "is_file": true, "name": "person.png" }, 
               "layers": [], 
               "composite": null 
-            }, // Person
-            { "path": hfGarmImg.path, "meta": { "_type": "gradio.FileData" } }, // Garment
-            "Vexa Fashion Try-On", // Description
-            true, // is_checked (mask)
-            true, // is_checked_crop
-            30, // steps
-            42, // seed
+            },
+            { "data": b64Garm, "is_file": true, "name": "garment.png" },
+            "Vexa Fashion Try-On", 
+            true, 
+            true, 
+            30, 
+            42,
           ],
-          fn_index: 0,
+          api_name: "tryon",
           session_hash: sessionHash
         }),
       });
@@ -276,7 +263,6 @@ export async function handleTryOn(
       const { event_id } = await joinResponse.json();
       console.log('[/api/tryon] AI processing started. Queue ID:', event_id);
 
-      // Poll for result (SSE equivalent via fetch loop)
       const dataRes = await fetch(`${SPACE_URL}/queue/data?session_hash=${sessionHash}`, { headers: authHeaders });
       if (!dataRes.ok) throw new Error(`SSE connect failed: ${dataRes.status}`);
 
@@ -290,7 +276,7 @@ export async function handleTryOn(
 
       try {
         while (true) {
-          if (Date.now() - startTime > 120_000) throw new Error('AI timeout (2 min)');
+          if (Date.now() - startTime > 180_000) throw new Error('AI timeout');
           const { done, value } = await reader.read();
           if (done) break;
           
@@ -299,18 +285,20 @@ export async function handleTryOn(
           sseBuffer = lines.pop() || '';
           
           for (const line of lines) {
-            if (!line.trim().startsWith('data: ')) continue;
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            
             try {
-              const parsed = JSON.parse(line.trim().slice(6));
+              const parsed = JSON.parse(trimmed.slice(6));
               if (parsed.msg === 'process_completed') {
-                if (parsed.success === true && parsed.output?.data) {
+                if (parsed.success && parsed.output?.data) {
                   resultData = parsed.output.data;
                 } else {
-                  throw new Error('AI Space reported failure');
+                  throw new Error(parsed.output?.error || 'Space GPU Error');
                 }
               }
             } catch (e) {
-              // Ignore partial JSON
+              if (e instanceof Error && e.message.includes('AI')) throw e;
             }
           }
           if (resultData) break;
@@ -319,23 +307,27 @@ export async function handleTryOn(
         reader.releaseLock();
       }
 
-      const firstResult = resultData?.[0];
-      const resultImageUrl = firstResult?.url || (firstResult?.path ? `${SPACE_URL}/file=${firstResult.path}` : null);
+      if (!resultData) throw new Error('No AI resultData');
+
+      const firstResult = resultData[0];
+      const resultImageUrl = typeof firstResult === 'string' 
+        ? `${SPACE_URL}/file=${firstResult}` 
+        : (firstResult?.url || (firstResult?.path ? `${SPACE_URL}/file=${firstResult.path}` : null));
+      
       if (!resultImageUrl) throw new Error('No result URL from AI');
 
       const imgRes = await fetch(resultImageUrl, { headers: authHeaders });
-      if (!imgRes.ok) throw new Error('Failed to download AI result');
+      if (!imgRes.ok) throw new Error(`Failed to download result image`);
       arrayBuffer = await imgRes.arrayBuffer();
-      console.log('[/api/tryon] AI engine succeeded');
 
     } catch (aiError) {
-      console.warn('[/api/tryon] AI engine unavailable, using demo fallback:', (aiError as Error).message);
+      console.warn('[/api/tryon] AI Engine Error:', (aiError as Error).message);
       arrayBuffer = null;
     }
   }
 
-  // 3. Demo fallback — use user photo directly if AI failed
   if (!arrayBuffer) {
+    console.log('[/api/tryon] Reverting to demo fallback...');
     if (userPhotoUrl?.startsWith('data:')) {
       const base64Data = userPhotoUrl.split(',')[1];
       if (base64Data) {
@@ -370,6 +362,9 @@ export async function handleTryOn(
   let fitLabel = 'True to size';
   let recommendedSize = 'M';
 
+  // Ensure user exists (Fix for FK violation if testing with guest accounts)
+  await (supabase.from('users') as any).upsert({ id: userId, email: `${userId}@vexa.guest` }).select();
+
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
   const { data: sizeChart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
 
@@ -380,6 +375,7 @@ export async function handleTryOn(
   }
 
   // 7. Cache result
+  console.log(`[/api/tryon] Caching result for user: ${userId}`);
   const { error: insertError } = await (supabase.from('tryon_results') as any).insert([
     {
       user_id: userId,

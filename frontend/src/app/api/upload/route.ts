@@ -74,11 +74,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     avatarUrl = await uploadToR2(buffer, filename, file.type);
   } catch (r2Err: unknown) {
-    const r2Error = r2Err as Error;
-    return NextResponse.json(
-      { error: r2Error.message ?? 'R2 Storage upload failed' },
-      { status: 500 }
-    );
+    console.warn('[/api/upload] R2 upload failed, falling back to base64:', (r2Err as Error).message);
+    const base64 = buffer.toString('base64');
+    avatarUrl = `data:${file.type};base64,${base64}`;
   }
 
   // 4. Update users table (non-fatal)
