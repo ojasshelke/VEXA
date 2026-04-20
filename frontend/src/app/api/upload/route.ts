@@ -14,7 +14,7 @@ import { uploadToR2 } from '@/lib/r2';
 function getServerSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !key) {
     throw new Error('Supabase env vars are not configured');
@@ -70,13 +70,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const originalName = file.name || 'image.jpg';
   const filename = `${user.id}/${Date.now()}-${originalName}`;
   
-  let avatarUrl: string;
-  try {
-    avatarUrl = await uploadToR2(buffer, filename, file.type);
-  } catch (r2Err: unknown) {
-    console.warn('[/api/upload] R2 upload failed, falling back to base64:', (r2Err as Error).message);
-    const base64 = buffer.toString('base64');
-    avatarUrl = `data:${file.type};base64,${base64}`;
+  const r2Url = await uploadToR2(buffer, filename, file.type);
+  const avatarUrl = r2Url ?? `data:${file.type};base64,${buffer.toString('base64')}`;
+  if (!r2Url) {
+    console.warn('[/api/upload] R2 unavailable — serving base64 avatar inline');
   }
 
   // 4. Update users table (non-fatal)

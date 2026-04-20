@@ -2,6 +2,7 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "@/store/useStore";
+import { supabase } from "@/lib/supabase";
 import { ChevronLeft, ChevronRight, Download, Heart, RefreshCw, Zap, CheckCircle2, AlertCircle, Ruler } from "lucide-react";
 
 export default function ResultUI() {
@@ -19,14 +20,20 @@ export default function ResultUI() {
 
   const fetchTryOn = useCallback(async () => {
     if (!currentUser?.id || !userPhotoUrl || !selectedOutfit) return;
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
       const res = await fetch("/api/tryon", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({
           userId: currentUser.id,
           userPhotoUrl,
@@ -63,9 +70,15 @@ export default function ResultUI() {
     if (!currentUser?.id || !selectedOutfit?.id) return;
     setIsSizeLoading(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
       const res = await fetch("/api/size", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({ userId: currentUser.id, productId: selectedOutfit.id })
       });
       if (res.ok) {
