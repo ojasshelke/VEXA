@@ -75,9 +75,15 @@ function OnboardingWizard() {
       });
       setUserPhotoUrl(base64);
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
       const res = await fetch('/api/avatar/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-vexa-key': 'onboarding' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({ userId: user?.id, photoBase64: base64, measurements: meas })
       });
 

@@ -44,7 +44,7 @@ function getR2Client(): S3Client {
 async function generatePresignedUrl(storagePath: string): Promise<string> {
   // Development fallback when R2 is not configured
   if (!process.env.R2_ACCOUNT_ID) {
-    const base = process.env.STORAGE_BASE_URL ?? 'https://cdn.vexa.dev';
+    const base = process.env.STORAGE_BASE_URL || 'https://cdn.vexa.dev';
     return `${base}/${storagePath}`;
   }
 

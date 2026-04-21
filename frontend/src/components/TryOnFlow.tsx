@@ -15,10 +15,12 @@ const STEPS = [
 export default function TryOnFlow() {
   const { isProcessing, setIsProcessing, userPhotoUrl, selectedOutfit, setTryOnResult, currentUser } = useStore();
   const [currentStep, setCurrentStep] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isProcessing || !userPhotoUrl || !selectedOutfit) return;
 
+    setErrorMessage(null);
     let stepInterval: NodeJS.Timeout;
     let currentStepIndex = 0;
 
@@ -75,11 +77,13 @@ export default function TryOnFlow() {
         }
       } catch (error) {
         console.error("Try-on failed:", error);
-        // Show error more gracefully - for now just reset
         setIsProcessing(false);
         setCurrentStep(0);
-        // We could add an alert here
-        alert(error instanceof Error ? error.message : "AI engine is currently busy. Please try again in a moment.");
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : 'AI engine is currently busy. Please try again in a moment.',
+        );
       } finally {
         if (stepInterval) clearInterval(stepInterval);
       }
@@ -92,9 +96,52 @@ export default function TryOnFlow() {
     };
   }, [isProcessing, userPhotoUrl, selectedOutfit, setIsProcessing, setTryOnResult, currentUser]);
 
-  if (!isProcessing) return null;
+  if (!isProcessing && !errorMessage) return null;
 
   const CurrentIcon = STEPS[currentStep].icon;
+
+  if (errorMessage) {
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl"
+        >
+          <div className="max-w-md w-full glass-panel flex flex-col items-center p-10 relative overflow-hidden text-center">
+            <div className="w-16 h-16 rounded-full bg-rose-500/20 border border-rose-500/30 flex items-center justify-center mb-6">
+              <Activity className="w-8 h-8 text-rose-400" />
+            </div>
+            <h3 className="text-2xl font-medium text-white mb-2">Try-On Failed</h3>
+            <p className="text-white/70 text-sm mb-6 leading-relaxed">{errorMessage}</p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => {
+                  setErrorMessage(null);
+                  setCurrentStep(0);
+                  setIsProcessing(false);
+                }}
+                className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 font-medium transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setErrorMessage(null);
+                  setCurrentStep(0);
+                  setIsProcessing(true);
+                }}
+                className="flex-1 py-3 rounded-xl bg-[#bef264] hover:bg-[#a3e635] text-black font-semibold transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
 
   return (
     <AnimatePresence>
