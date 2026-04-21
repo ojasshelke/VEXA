@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
+import { startFashnTryOn, pollFashnResult } from '@/lib/fashn';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
@@ -71,98 +72,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
 
       try {
-        const hfKey = process.env.HUGGINGFACE_API_KEY;
-        if (!hfKey) throw new Error("Missing HUGGINGFACE_API_KEY");
+        const fashnKey = process.env.FASHN_API_KEY;
 
-        const SPACE_URL = 'https://yisol-idm-vton.hf.space';
-        const authHeaders = { Authorization: `Bearer ${hfKey}` };
-
-        // Upload images to the HF Space first
-        async function uploadToSpace(imageUrl: string, filename: string): Promise<string> {
-          const imgRes = await fetch(imageUrl);
-          if (!imgRes.ok) throw new Error(`Failed to download: ${imageUrl}`);
-          const imgBuffer = await imgRes.arrayBuffer();
-          const blob = new Blob([imgBuffer], { type: 'image/jpeg' });
-          const formData = new FormData();
-          formData.append('files', blob, filename);
-          const uploadRes = await fetch(`${SPACE_URL}/upload`, {
-            method: 'POST', headers: authHeaders, body: formData,
-          });
-          if (!uploadRes.ok) throw new Error(`Space upload failed: ${uploadRes.status}`);
-          const paths = await uploadRes.json();
-          return paths[0];
+        if (!fashnKey) {
+          return NextResponse.json({ error: 'No try-on API key configured' }, { status: 503 });
         }
 
-        const humanPath = await uploadToSpace(targetPhotoUrl, `human_${Date.now()}.jpg`);
-        const garmPath = await uploadToSpace(productImageUrl, `garment_${Date.now()}.jpg`);
-
-        const sessionHash = Math.random().toString(36).substring(2, 15);
-
-        const joinRes = await fetch(`${SPACE_URL}/queue/join`, {
-          method: "POST",
-          headers: { ...authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            data: [
-              { 
-                background: { path: humanPath, meta: { _type: "gradio.FileData" } },
-                layers: [],
-                composite: null,
-              },
-              { path: garmPath, meta: { _type: "gradio.FileData" } },
-              "Garment",
-              true,
-              true,
-              30,
-              42,
-            ],
-            fn_index: 0,
-            session_hash: sessionHash,
-          })
-        });
-
-        if (!joinRes.ok) {
-          const text = await joinRes.text();
-          throw new Error(`Failed to join AI queue: ${joinRes.status} - ${text}`);
-        }
-
-        // Poll for results via SSE
-        const dataRes = await fetch(`${SPACE_URL}/queue/data?session_hash=${sessionHash}`, {
-          headers: authHeaders,
-        });
-
-        if (!dataRes.ok) throw new Error(`Failed to connect to AI result stream`);
-
-        const sseText = await dataRes.text();
-        let resultData: any = null;
-        for (const line of sseText.split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              const parsed = JSON.parse(line.slice(6));
-              if (parsed.msg === 'process_completed' && parsed.output?.data) {
-                resultData = parsed.output.data;
-                break;
-              }
-            } catch { /* skip */ }
+        let arrayBuffer: ArrayBuffer | null = null;
+        
+        console.log(`[/api/tryon/batch] Starting Fashn.ai for product ${productId}...`);
+        const predictionId = await startFashnTryOn(targetPhotoUrl, productImageUrl, fashnKey);
+        let fashnResultUrl: string | null = null;
+        
+        for (let i = 0; i < 45; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const statusUrl = await pollFashnResult(predictionId, fashnKey);
+          if (statusUrl) {
+            fashnResultUrl = statusUrl;
+            break;
           }
         }
 
-        if (!resultData?.[0]) throw new Error("No result from AI engine");
-
-        const firstResult = resultData[0];
-        let resultTmpUrl: string | null = null;
-        if (typeof firstResult === 'string') {
-          resultTmpUrl = firstResult.startsWith('http') ? firstResult : `${SPACE_URL}/file=${firstResult}`;
-        } else if (firstResult?.url) {
-          resultTmpUrl = firstResult.url;
-        } else if (firstResult?.path) {
-          resultTmpUrl = `${SPACE_URL}/file=${firstResult.path}`;
+        if (fashnResultUrl) {
+          const imgRes = await fetch(fashnResultUrl);
+          if (!imgRes.ok) throw new Error('Failed to download Fashn result image');
+          arrayBuffer = await imgRes.arrayBuffer();
+          console.log(`[/api/tryon/batch] Fashn.ai completed for product ${productId}.`);
+        } else {
+          throw new Error('Fashn.ai polling timed out');
         }
 
-        if (!resultTmpUrl) throw new Error("No result URL from AI engine");
-
-        const resultImgRes = await fetch(resultTmpUrl, { headers: authHeaders });
-        if (!resultImgRes.ok) throw new Error("Failed to download generated image");
-        const arrayBuffer = await resultImgRes.arrayBuffer();
+        if (!arrayBuffer) {
+          throw new Error('Try-on method failed');
+        }
         
         const fileName = `tryon_${userId}_${productId}_${Date.now()}.png`;
         const storagePath = `tryons/${fileName}`;
@@ -196,10 +138,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       } catch (e: unknown) {
         const err = e as Error;
         console.error(`Batch tryon failed for ${productId}:`, err);
+        results.push({ productId, error: err.message });
       }
     }
 
-    return NextResponse.json(results, { status: 200 });
+    return NextResponse.json({ results }, { status: 200 });
 
   } catch (error: unknown) {
     const err = error as Error;

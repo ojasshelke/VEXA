@@ -11,6 +11,7 @@ import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
 import type { MarketplaceContext } from '@/types';
 import type { Database, UserRow, TryOnResultRow } from '@/types/database';
 import { uploadToR2 } from '@/lib/r2';
+import { startFashnTryOn, pollFashnResult } from '@/lib/fashn';
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -132,35 +133,7 @@ async function uploadDataUrl(
   }
 }
 
-/**
- * Converts a URL or Buffer to a base64 string formatted for Gradio Data injection.
- */
-async function toGradioBase64(source: string | Buffer): Promise<string | null> {
-  try {
-    let buffer: Buffer;
-    let mime = 'image/png';
 
-    if (typeof source === 'string' && source.startsWith('data:')) {
-      const parts = source.split(',');
-      mime = parts[0].split(':')[1].split(';')[0];
-      buffer = Buffer.from(parts[1], 'base64');
-    } else if (Buffer.isBuffer(source)) {
-      buffer = source;
-    } else if (typeof source === 'string' && source.startsWith('http')) {
-      const res = await fetch(source);
-      if (!res.ok) return null;
-      const ab = await res.arrayBuffer();
-      buffer = Buffer.from(ab);
-      mime = res.headers.get('content-type') || 'image/png';
-    } else {
-      return null;
-    }
-
-    return `data:${mime};base64,${buffer.toString('base64')}`;
-  } catch (e) {
-    return null;
-  }
-}
 
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
 
@@ -191,7 +164,7 @@ export async function handleTryOn(
   supabase: SupabaseClient<Database>
 ): Promise<HandleTryOnResult> {
   const { userId, productId, userPhotoUrl, productImageUrl } = input;
-  const hfKey = process.env.HUGGINGFACE_API_KEY;
+  const fashnKey = process.env.FASHN_API_KEY;
 
   // 1. Check cache
   const { data: cachedRecord } = await supabase
@@ -219,126 +192,38 @@ export async function handleTryOn(
     };
   }
 
-  // 2. Try HF Space AI engine (Direct Base64 Injection)
-  const SPACE_URL = 'https://yisol-idm-vton.hf.space';
-  const authHeaders = { Authorization: `Bearer ${hfKey}` };
+  // 2. Run Fashn.ai Try-On Engine
+  if (!fashnKey) {
+    throw new Error('Try-on service not configured');
+  }
+
   let arrayBuffer: ArrayBuffer | null = null;
   
-  if (hfKey && userPhotoUrl && productImageUrl) {
-    try {
-      console.log('[/api/tryon] Starting AI Engine via Base64 Injection...');
-      
-      const [b64User, b64Garm] = await Promise.all([
-        toGradioBase64(userPhotoUrl),
-        toGradioBase64(productImageUrl)
-      ]);
+  if (!userPhotoUrl || !productImageUrl) {
+    throw new Error('Missing user photo or product image');
+  }
 
-      if (!b64User || !b64Garm) throw new Error('Failed to encode assets for AI cluster');
-
-      const sessionHash = Math.random().toString(36).substring(2, 15);
-      
-      const joinResponse = await fetch(`${SPACE_URL}/queue/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({
-          data: [
-            { 
-              "background": { "data": b64User, "is_file": true, "name": "person.png" }, 
-              "layers": [], 
-              "composite": null 
-            },
-            { "data": b64Garm, "is_file": true, "name": "garment.png" },
-            "Vexa Fashion Try-On", 
-            true, 
-            true, 
-            30, 
-            42,
-          ],
-          api_name: "tryon",
-          session_hash: sessionHash
-        }),
-      });
-
-      if (!joinResponse.ok) throw new Error(`AI Queue join failed: ${joinResponse.status}`);
-      const { event_id } = await joinResponse.json();
-      console.log('[/api/tryon] AI processing started. Queue ID:', event_id);
-
-      const dataRes = await fetch(`${SPACE_URL}/queue/data?session_hash=${sessionHash}`, { headers: authHeaders });
-      if (!dataRes.ok) throw new Error(`SSE connect failed: ${dataRes.status}`);
-
-      const reader = dataRes.body?.getReader();
-      if (!reader) throw new Error('No SSE stream');
-
-      const decoder = new TextDecoder();
-      let resultData: any = null;
-      let sseBuffer = '';
-      const startTime = Date.now();
-
-      try {
-        while (true) {
-          if (Date.now() - startTime > 180_000) throw new Error('AI timeout');
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split('\n');
-          sseBuffer = lines.pop() || '';
-          
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data: ')) continue;
-            
-            try {
-              const parsed = JSON.parse(trimmed.slice(6));
-              if (parsed.msg === 'process_completed') {
-                if (parsed.success && parsed.output?.data) {
-                  resultData = parsed.output.data;
-                } else {
-                  throw new Error(parsed.output?.error || 'Space GPU Error');
-                }
-              }
-            } catch (e) {
-              if (e instanceof Error && e.message.includes('AI')) throw e;
-            }
-          }
-          if (resultData) break;
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-      if (!resultData) throw new Error('No AI resultData');
-
-      const firstResult = resultData[0];
-      const resultImageUrl = typeof firstResult === 'string' 
-        ? `${SPACE_URL}/file=${firstResult}` 
-        : (firstResult?.url || (firstResult?.path ? `${SPACE_URL}/file=${firstResult.path}` : null));
-      
-      if (!resultImageUrl) throw new Error('No result URL from AI');
-
-      const imgRes = await fetch(resultImageUrl, { headers: authHeaders });
-      if (!imgRes.ok) throw new Error(`Failed to download result image`);
-      arrayBuffer = await imgRes.arrayBuffer();
-
-    } catch (aiError) {
-      console.warn('[/api/tryon] AI Engine Error:', (aiError as Error).message);
-      arrayBuffer = null;
+  console.log('[/api/tryon] Starting Fashn.ai Try-On Engine...');
+  const predictionId = await startFashnTryOn(userPhotoUrl, productImageUrl, fashnKey);
+  
+  let fashnResultUrl: string | null = null;
+  for (let i = 0; i < 45; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const statusUrl = await pollFashnResult(predictionId, fashnKey);
+    if (statusUrl) {
+      fashnResultUrl = statusUrl;
+      break;
     }
   }
 
-  if (!arrayBuffer) {
-    console.log('[/api/tryon] Reverting to demo fallback...');
-    if (userPhotoUrl?.startsWith('data:')) {
-      const base64Data = userPhotoUrl.split(',')[1];
-      if (base64Data) {
-        const buf = Buffer.from(base64Data, 'base64');
-        arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-      }
-    } else if (userPhotoUrl) {
-      const res = await fetch(userPhotoUrl);
-      if (res.ok) arrayBuffer = await res.arrayBuffer();
-    }
+  if (!fashnResultUrl) {
+    throw new Error('Try-on timed out, please try again');
   }
+
+  console.log('[/api/tryon] Fashn.ai completed successfully.');
+  const imgRes = await fetch(fashnResultUrl);
+  if (!imgRes.ok) throw new Error('Failed to download Fashn result image');
+  arrayBuffer = await imgRes.arrayBuffer();
 
   if (!arrayBuffer) throw new Error('No image data to store');
 
@@ -446,6 +331,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (error: unknown) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error('[/api/tryon] Error:', err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    const status = err.message === 'Try-on service not configured' ? 503 : (err.message.includes('timed out') ? 504 : 500);
+    return NextResponse.json({ error: err.message }, { status });
   }
 }
