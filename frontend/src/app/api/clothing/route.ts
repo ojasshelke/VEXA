@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { ProductCategory } from '@/types';
+import { fal } from '@fal-ai/client';
 
-const MESHY_API_BASE = 'https://api.meshy.ai/openapi/v1';
+export const maxDuration = 300;
 
 function getSupabase(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -36,17 +37,6 @@ const ALLOWED_CATEGORIES: readonly ProductCategory[] = [
 
 function isProductCategory(value: string): value is ProductCategory {
   return (ALLOWED_CATEGORIES as readonly string[]).includes(value);
-}
-
-interface MeshyCreateResponse {
-  result: string;
-}
-
-interface MeshyTaskResponse {
-  status: string;
-  model_urls?: {
-    glb?: string;
-  };
 }
 
 interface ClothingApiSuccess {
@@ -103,57 +93,39 @@ export async function POST(
       return NextResponse.json({ glbUrl: cached.glb_url, cached: true });
     }
 
-    const meshyKey = process.env.MESHY_API_KEY;
-    if (!meshyKey) {
+    const falKey = process.env.FAL_KEY;
+    if (!falKey) {
       return NextResponse.json(
-        { error: 'MESHY_API_KEY not configured' },
+        { error: 'FAL_KEY not configured' },
         { status: 500 }
       );
     }
 
-    const taskRes = await fetch(`${MESHY_API_BASE}/image-to-3d`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${meshyKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        image_url: productImageUrl,
-        enable_pbr: true,
-        should_texture: true,
-        should_remesh: true,
-        ai_model: 'latest',
-        topology: 'quad',
-        target_polycount: 30000,
-      }),
+    fal.config({ credentials: falKey });
+
+    const result = await fal.subscribe('fal-ai/hyper3d/rodin', {
+      input: {
+        input_image_urls: [productImageUrl],
+        geometry_file_format: 'glb',
+        material: 'PBR',
+        quality: 'medium',
+      }
     });
 
-    if (!taskRes.ok) {
-      const errText = await taskRes.text();
-      throw new Error(`Meshy task creation failed: ${errText}`);
+    if (!result.data?.model_mesh?.url) {
+      throw new Error('Fal task creation returned unexpected payload');
     }
+    
+    const glbUrl = result.data.model_mesh.url;
 
-    const taskJson: unknown = await taskRes.json();
-    if (
-      typeof taskJson !== 'object' ||
-      taskJson === null ||
-      !('result' in taskJson) ||
-      typeof (taskJson as MeshyCreateResponse).result !== 'string'
-    ) {
-      throw new Error('Meshy task creation returned unexpected payload');
-    }
-    const taskId = (taskJson as MeshyCreateResponse).result;
-
-    // Submit task to Meshy — DO NOT poll here (serverless timeout risk)
-    // Persist pending task to Supabase for client to poll via /api/clothing/status/[taskId]
     const { error: upsertError } = await supabase.from('clothing_assets').upsert(
       {
         product_id: productId,
         product_image_url: productImageUrl,
         category,
-        meshy_task_id: taskId,
-        glb_url: null,
-        status: 'pending',
+        glb_url: glbUrl,
+        status: 'completed',
+        meshy_task_id: null,
       } as any,
       { onConflict: 'product_id' }
     );
@@ -162,7 +134,7 @@ export async function POST(
       console.error('[/api/clothing] Supabase upsert:', upsertError.message);
     }
 
-    return NextResponse.json({ taskId, status: 'pending', cached: false } as any);
+    return NextResponse.json({ glbUrl, cached: false });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[/api/clothing]', message);

@@ -57,18 +57,22 @@ def verify_internal_token(credentials: HTTPAuthorizationCredentials | None = Sec
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 
+from pydantic import BaseModel, Field
+
 class Measurements(BaseModel):
-    height: float
-    chest: float
-    waist: float
-    hips: float
-    inseam: float
-    shoulder_width: float
+    height: float = Field(default=0.0, alias="heightCm")
+    chest: float = Field(default=0.0, alias="chestCm")
+    waist: float = Field(default=0.0, alias="waistCm")
+    hips: float = Field(default=0.0, alias="hipsCm")
+    inseam: float = Field(default=0.0, alias="inseamCm")
+    shoulder_width: float = Field(default=0.0, alias="shoulderWidthCm")
+    weight: float = Field(default=0.0, alias="weightKg")
 
 
 class AvatarRequest(BaseModel):
     photo_url: str
     measurements: Measurements
+    user_id: str = "unknown"
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -137,6 +141,26 @@ async def generate_avatar_full(req: AvatarRequest):
 
             r2_key = f"avatars/{uuid.uuid4().hex}.glb"
             avatar_url = upload_to_r2(glb_path, r2_key, "model/gltf-binary")
+
+        archetype_ids = [item["archetype"]["id"] for item in archetypes]
+
+        import requests
+        try:
+            response = requests.post(
+                f"{os.environ.get('NEXT_PUBLIC_APP_URL', 'http://localhost:3000').rstrip('/')}/api/webhook/avatar-ready",
+                json={
+                    "userId": req.user_id,
+                    "glbUrl": avatar_url,
+                    "archetypeIds": archetype_ids,
+                    "status": "ready"
+                },
+                headers={
+                    "Authorization": f"Bearer {os.environ.get('INTERNAL_SERVICE_TOKEN', '')}" if os.environ.get('INTERNAL_SERVICE_TOKEN', '').startswith('vx_') else os.environ.get('INTERNAL_SERVICE_TOKEN', '')
+                },
+                timeout=10
+            )
+        except Exception as e:
+            logger.warning(f"Failed to call avatar-ready webhook: {e}")
 
         return {
             "avatar_url": avatar_url,
