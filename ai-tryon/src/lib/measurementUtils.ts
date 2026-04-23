@@ -18,12 +18,16 @@ export type MeasurementValidationError = {
   message: string;
 };
 
-export function validateMeasurements(m: Partial<Measurements>): MeasurementValidationError[] {
+export function validateMeasurements(m: Record<string, any>): MeasurementValidationError[] {
   const errors: MeasurementValidationError[] = []
-  if (!m.height || m.height < 100 || m.height > 250) errors.push({ field: 'heightCm', message: 'Height must be between 100-250cm' })
-  if (!m.chest || m.chest < 30 || m.chest > 200) errors.push({ field: 'chestCm', message: 'Chest must be between 30-200cm' })
-  if (!m.waist || m.waist < 30 || m.waist > 200) errors.push({ field: 'waistCm', message: 'Waist must be between 30-200cm' })
-  if (!m.hips || m.hips < 30 || m.hips > 200) errors.push({ field: 'hipsCm', message: 'Hips must be between 30-200cm' })
+  const h = m.height_cm ?? m.height ?? 0
+  const c = m.chest_cm ?? m.chest ?? 0
+  const w = m.waist_cm ?? m.waist ?? 0
+  const hp = m.hips_cm ?? m.hips ?? 0
+  if (!h || h < 100 || h > 250) errors.push({ field: 'heightCm', message: 'Height must be between 100-250cm' })
+  if (!c || c < 30 || c > 200) errors.push({ field: 'chestCm', message: 'Chest must be between 30-200cm' })
+  if (!w || w < 30 || w > 200) errors.push({ field: 'waistCm', message: 'Waist must be between 30-200cm' })
+  if (!hp || hp < 30 || hp > 200) errors.push({ field: 'hipsCm', message: 'Hips must be between 30-200cm' })
   return errors
 }
 

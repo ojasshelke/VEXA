@@ -1,4 +1,4 @@
+// DEPRECATED — use @/components/ResultUI instead.
+// This file exists only for backward-compatibility imports.
 'use client'
-export function ResultUI() {
-  return <div>ResultUI — todo</div>
-}
+export { ResultUI } from '@/components/ResultUI'

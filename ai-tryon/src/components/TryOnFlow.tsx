@@ -31,34 +31,46 @@ export default function TryOnFlow() {
       }, 1500);
 
       try {
+        console.log('[TryOnFlow] Calling /api/tryon with:', {
+          userPhotoUrl: userImage?.substring(0, 50),
+          productImageUrl: selectedOutfit?.imageUrl?.substring(0, 50),
+        });
+
         const response = await fetch('/api/tryon', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userImage,
-            outfitId: selectedOutfit?.id,
-            outfitImageUrl: selectedOutfit?.imageUrl
+            userId: 'anonymous',
+            productId: selectedOutfit?.id || 'unknown',
+            userPhotoUrl: userImage,
+            productImageUrl: selectedOutfit?.imageUrl,
+            category: 'upper_body',
           })
         });
 
         const data = await response.json();
+        console.log('[TryOnFlow] Result:', data);
         
-        if (data.success && selectedOutfit && userImage) {
+        if (data.status === 'ready' && data.resultUrl && selectedOutfit && userImage) {
           // Slight delay to see the final step text clearly
           setTimeout(() => {
             setTryOnResult({
               id: `${Date.now()}`,
               originalImage: userImage,
-              resultImage: data.resultImage,
+              resultImage: data.resultUrl,
               outfit: selectedOutfit,
-              aiAnalysis: data.aiAnalysis
+              status: 'ready',
             });
             setIsProcessing(false);
             setCurrentStep(0);
           }, 600);
+        } else {
+          console.error('[TryOnFlow] Try-on returned non-ready:', data);
+          setIsProcessing(false);
+          setCurrentStep(0);
         }
       } catch (error) {
-        console.error("Try-on failed", error);
+        console.error("[TryOnFlow] Try-on failed", error);
         setIsProcessing(false);
         setCurrentStep(0);
       } finally {

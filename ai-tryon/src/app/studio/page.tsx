@@ -16,16 +16,18 @@ export default function StudioPage() {
   const [error, setError] = useState<string | null>(null);
 
   const handleProcess = async () => {
-    if (!userImage || !selectedOutfit || !user?.id) return;
+    if (!userImage || !selectedOutfit) return;
     
     setError(null);
     setIsProcessing(true);
     
     try {
-      // Trigger API call
-      await triggerTryOn(selectedOutfit as any, user.id);
+      const userId = user?.id || 'anonymous';
+      console.log('[Studio] Starting try-on for user:', userId);
+      await triggerTryOn(selectedOutfit as any, userId, userImage);
     } catch (err: any) {
-      setError(err.message || "Try-on failed");
+      console.error('[Studio] Try-on failed:', err);
+      setError(err.message || "Virtual try-on failed — AI service unavailable. Please try again later.");
     } finally {
       setIsProcessing(false);
     }
@@ -102,7 +104,7 @@ export default function StudioPage() {
                 </div>
               )}
             </motion.div>
-          ) || null}
+          )}
         </AnimatePresence>
 
       </div>

@@ -13,6 +13,9 @@ import type { ClothingAssetRow, Database, UserRow, TryOnResultRow } from '@/type
 import { uploadToR2 } from '@/lib/r2';
 import { startFashnTryOn, pollFashnResult } from '@/lib/fashn';
 
+// Local IDM-VTON service URL (takes priority over HuggingFace)
+const LOCAL_TRYON_URL = process.env.LOCAL_TRYON_URL || process.env.TRYON_SERVICE_URL || '';
+
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
 const ALLOWED_STORAGE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -278,11 +281,80 @@ export async function handleTryOn(
     };
   }
 
-  if (!userPhotoUrl || !productImageUrl) {
-    throw new Error('Missing user photo or product image');
+  // 2. Try LOCAL IDM-VTON first (no quota limits, no network dependency)
+  if (LOCAL_TRYON_URL && userPhotoUrl && productImageUrl) {
+    try {
+      console.log('[/api/tryon] Trying local IDM-VTON at', LOCAL_TRYON_URL);
+
+      const { data: clothingRows } = await supabase
+        .from('clothing_assets')
+        .select('category')
+        .eq('product_id', productId)
+        .limit(1);
+      const clothingCategory =
+        (clothingRows as Pick<ClothingAssetRow, 'category'>[] | null)?.[0]?.category ?? null;
+      const idmGarmentType = idmVtonCategoryFromProductCategory(clothingCategory);
+
+      // Start job
+      const startRes = await fetch(`${LOCAL_TRYON_URL}/tryon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_image_url: userPhotoUrl,
+          garment_image_url: productImageUrl,
+          garment_category: idmGarmentType,
+          user_id: userId,
+          product_id: productId,
+        }),
+      });
+
+      if (startRes.ok) {
+        const job = await startRes.json() as { job_id: string };
+        const jobId = job.job_id;
+
+        // Poll for result (up to 5 min)
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 5000));
+          const statusRes = await fetch(`${LOCAL_TRYON_URL}/tryon-status/${jobId}`);
+          if (!statusRes.ok) continue;
+          const status = await statusRes.json() as { status: string; result_url?: string; error?: string };
+
+          if (status.status === 'ready' && status.result_url) {
+            // Download result from local server and re-upload to R2
+            const imgRes = await fetch(status.result_url);
+            if (imgRes.ok) {
+              arrayBuffer = await imgRes.arrayBuffer();
+              console.log('[/api/tryon] Local IDM-VTON succeeded!');
+              break;
+            }
+          }
+          if (status.status === 'error') {
+            lastAiError = `Local IDM-VTON: ${status.error}`;
+            console.warn('[/api/tryon] Local IDM-VTON error:', status.error);
+            break;
+          }
+        }
+      }
+    } catch (localErr) {
+      console.warn('[/api/tryon] Local IDM-VTON unavailable:', (localErr as Error).message);
+      lastAiError = `Local service down: ${(localErr as Error).message}`;
+    }
   }
 
-  // 2. Run Try-On Engine (Fashn.ai with HuggingFace Fallback)
+  // 3. Fallback to HF Space AI engine (if local didn't produce a result)
+  //
+  // yisol/IDM-VTON is a Gradio 4.x Space with an ImageEditor + File input pair.
+  // It rejects inline base64 via /queue/join with 400. The reliable path is:
+  //   1. POST each image to `${SPACE}/upload` (multipart) → returns server path
+  //   2. POST /queue/join with `{ path, meta: {_type:"gradio.FileData"} }` refs
+  //   3. Read SSE on `/queue/data?session_hash=…` until `process_completed`
+  //   4. `output.data[0]` is either a path string, a FileData object, or a
+  //      base64 data URL — handle all three.
+  //
+  // Configurable via HF_SPACE_URL so you can switch to a mirror fork when
+  // `yisol/IDM-VTON` is sleeping or has exhausted its ZeroGPU quota.
+  const SPACE_URL = (process.env.HF_SPACE_URL || 'https://yisol-idm-vton.hf.space').replace(/\/$/, '');
+  const authHeaders = { Authorization: `Bearer ${hfKey}` };
   let arrayBuffer: ArrayBuffer | null = null;
   let lastAiError: string | null = null;
 

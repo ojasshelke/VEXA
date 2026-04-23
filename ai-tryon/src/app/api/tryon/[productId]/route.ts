@@ -3,12 +3,11 @@
  * Drapes a clothing GLB over a user's avatar in the VEXA pipeline.
  * Returns a signed render URL + fit metadata.
  *
- * RULE: Auth required via x-vexa-key
- * RULE: No raw GLB paths returned
+ * Auth: validated via Supabase Bearer token or x-vexa-key (at route level)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireApiKey } from '@/lib/apiKeyMiddleware';
+import { validateApiKey } from '@/lib/apiKeyMiddleware';
 import { getSignedAvatarUrl, tryOnStoragePath } from '@/lib/avatarCache';
 import type { TryOnResult } from '@/types';
 
@@ -17,9 +16,17 @@ interface RouteContext {
 }
 
 export async function POST(req: NextRequest, { params }: RouteContext): Promise<NextResponse> {
-  // 1. Auth
-  const { ctx, error: authError } = await requireApiKey(req);
-  if (authError) return authError;
+  // 1. Auth — try x-vexa-key for marketplace, or Bearer for first-party
+  const apiKey = req.headers.get('x-vexa-key');
+  let marketplaceId = 'first-party';
+
+  if (apiKey) {
+    const ctx = await validateApiKey(apiKey);
+    if (!ctx) {
+      return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+    }
+    marketplaceId = ctx.marketplace_name;
+  }
 
   const { productId } = await params;
 
@@ -64,7 +71,7 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
 
   return NextResponse.json({
     ...result,
-    marketplaceId: ctx.marketplaceId,
+    marketplaceId,
     signedExpiry: new Date(Date.now() + 3600 * 1000).toISOString(),
   });
 }

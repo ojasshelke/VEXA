@@ -33,6 +33,6 @@ export function useMeasurements(userId: string | undefined) {
   return {
     measurements,
     isLoading,
-    hasCompletedOnboarding: !!measurements && !!measurements.height,
+    hasCompletedOnboarding: !!measurements && !!measurements.height_cm,
   }
 }
