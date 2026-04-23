@@ -54,10 +54,17 @@ export function TryOnOverlay({
 }: TryOnOverlayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const { status, result, error, triggerTryOn, reset } = useTryOn({ userId, apiKey });
+  const { results, isProcessing, triggerTryOn } = useTryOn();
+  const result = results[productId];
+  const status = isProcessing ? 'loading' : (result?.status || 'idle');
+  const error = result?.status === 'error' ? 'Try-on failed' : undefined;
+  const reset = () => { /* no-op for now */ };
 
   const handleTryOn = () => {
-    triggerTryOn(productId, avatarGlbUrl, clothingGlbUrl);
+    triggerTryOn(
+      { id: productId, name: product?.name || '', brand: product?.brand || '', image_url: avatarGlbUrl, clothing_image_url: clothingGlbUrl, price: product?.price || 0, sizes: product?.sizes || [], category: 'tops' },
+      userId
+    );
   };
 
   return (
@@ -100,9 +107,8 @@ export function TryOnOverlay({
         <div className="border-t border-white/10 p-4 space-y-4">
           {/* 3D Viewer */}
           <AvatarViewer
-            glbUrl={status === 'ready' ? (result?.renderUrl ?? avatarGlbUrl) : avatarGlbUrl}
+            avatarUrl={status === 'ready' ? (result?.renderUrl ?? avatarGlbUrl) : avatarGlbUrl}
             className="h-72"
-            showControls
           />
 
           {/* Try-On Controls */}

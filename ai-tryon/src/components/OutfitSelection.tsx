@@ -7,12 +7,12 @@ import type { Product } from "@/types";
 import { Check, Sparkles, Loader2 } from "lucide-react";
 
 const PRODUCTS: Product[] = [
-  { id: "p1", name: "Cyberpunk Tech Hoodie", price: 159, imageUrl: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=600&h=800&fit=crop", category: "outerwear" },
-  { id: "p2", name: "Neural Silk Blouse", price: 89, imageUrl: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&h=800&fit=crop", category: "tops" },
-  { id: "p3", name: "Glitch Denim Jacket", price: 199, imageUrl: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=800&fit=crop", category: "outerwear" },
-  { id: "p4", name: "Vector Cargo Pants", price: 120, imageUrl: "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?w=600&h=800&fit=crop", category: "bottoms" },
-  { id: "p5", name: "Pixel Weave Scarf", price: 45, imageUrl: "https://images.unsplash.com/photo-1520903920243-00d872a2d1c9?w=600&h=800&fit=crop", category: "accessories" },
-  { id: "p6", name: "Binary Evening Dress", price: 299, imageUrl: "https://images.unsplash.com/photo-1550639525-c97d455acf70?w=600&h=800&fit=crop", category: "dresses" },
+  { id: "p1", name: "Cyberpunk Tech Hoodie", brand: "VEXA", price: 159, image_url: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=600&h=800&fit=crop", sizes: ["S","M","L","XL"], category: "outerwear" },
+  { id: "p2", name: "Neural Silk Blouse", brand: "VEXA", price: 89, image_url: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&h=800&fit=crop", sizes: ["S","M","L"], category: "tops" },
+  { id: "p3", name: "Glitch Denim Jacket", brand: "VEXA", price: 199, image_url: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=800&fit=crop", sizes: ["S","M","L","XL"], category: "outerwear" },
+  { id: "p4", name: "Vector Cargo Pants", brand: "VEXA", price: 120, image_url: "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?w=600&h=800&fit=crop", sizes: ["S","M","L"], category: "bottoms" },
+  { id: "p5", name: "Pixel Weave Scarf", brand: "VEXA", price: 45, image_url: "https://images.unsplash.com/photo-1520903920243-00d872a2d1c9?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1520903920243-00d872a2d1c9?w=600&h=800&fit=crop", sizes: ["One Size"], category: "accessories" },
+  { id: "p6", name: "Binary Evening Dress", brand: "VEXA", price: 299, image_url: "https://images.unsplash.com/photo-1550639525-c97d455acf70?w=600&h=800&fit=crop", clothing_image_url: "https://images.unsplash.com/photo-1550639525-c97d455acf70?w=600&h=800&fit=crop", sizes: ["S","M","L"], category: "dresses" },
 ];
 
 export const OutfitSelection = () => {
@@ -58,7 +58,7 @@ export const OutfitSelection = () => {
                 !hasImage ? 'opacity-30 cursor-not-allowed' : isSelected ? 'border-[#bef264] shadow-[0_0_30px_rgba(190,242,100,0.2)]' : 'border-white/5 hover:border-white/20'
               }`}
             >
-              <img src={product.imageUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+              <img src={product.image_url} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
               
               {isSelected && (

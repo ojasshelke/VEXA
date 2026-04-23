@@ -1,9 +1,8 @@
-# backend/main.py — dev-friendly stub that returns a ready placeholder GLB.
+# backend/main.py — VEXA Avatar Service with IDOL + IDM-VTON proxy.
 #
-# The full SMPL-X + face-texture pipeline is preserved under /generate-avatar-full
-# so it can be re-enabled once the model weights and runtime deps are installed.
-# For local development we prefer fast, deterministic behavior: return the
-# placeholder avatar URL served by the Next.js frontend from /public/models/avatar.glb.
+# /generate-avatar   → tries local IDOL (port 8001) first, falls back to placeholder
+# /tryon             → tries local IDM-VTON (port 8002) first
+# /generate-avatar-full → legacy SMPL-X pipeline (unchanged)
 
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,11 +11,16 @@ from pydantic import BaseModel
 import os
 import hmac
 import logging
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vexa")
 
 app = FastAPI(title="VEXA Avatar Service", version="1.0.0")
+
+# ─── Service URLs ─────────────────────────────────────────────────────────────
+IDOL_SERVICE = os.environ.get("IDOL_SERVICE_URL", "http://localhost:8001")
+TRYON_SERVICE = os.environ.get("TRYON_SERVICE_URL", "http://localhost:8002")
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 # The frontend Next.js API routes proxy these calls server-side, so browsers
@@ -68,28 +72,143 @@ class Measurements(BaseModel):
 
 class AvatarRequest(BaseModel):
     photo_url: str
-    measurements: Measurements
+    measurements: Measurements | None = None
+
+
+class TryOnRequest(BaseModel):
+    person_image_url: str
+    garment_image_url: str
+    garment_category: str = "upper_body"
+    user_id: str
+    product_id: str
+
+
+# ─── IDOL / IDM-VTON proxy helpers ───────────────────────────────────────────
+
+async def _idol_generate(photo_url: str, user_id: str) -> dict:
+    """Call local IDOL service and poll for result."""
+    import httpx
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(
+            f"{IDOL_SERVICE}/generate-avatar",
+            json={"photo_url": photo_url, "user_id": user_id}
+        )
+        resp.raise_for_status()
+        job = resp.json()
+        job_id = job["job_id"]
+
+        for _ in range(60):  # poll up to 5 min
+            await asyncio.sleep(5)
+            status_resp = await client.get(f"{IDOL_SERVICE}/avatar-status/{job_id}")
+            status = status_resp.json()
+            if status["status"] == "ready":
+                return {"avatar_url": status["avatar_url"], "status": "ready"}
+            if status["status"] == "error":
+                raise Exception(f"IDOL error: {status.get('error')}")
+
+        raise Exception("IDOL timeout after 5 minutes")
+
+
+async def _tryon_local(
+    person_url: str, garment_url: str,
+    user_id: str, product_id: str,
+    category: str = "upper_body"
+) -> str:
+    """Call local IDM-VTON service and poll for result URL."""
+    import httpx
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(
+            f"{TRYON_SERVICE}/tryon",
+            json={
+                "person_image_url": person_url,
+                "garment_image_url": garment_url,
+                "garment_category": category,
+                "user_id": user_id,
+                "product_id": product_id
+            }
+        )
+        resp.raise_for_status()
+        job = resp.json()
+        job_id = job["job_id"]
+
+        for _ in range(60):
+            await asyncio.sleep(5)
+            status_resp = await client.get(f"{TRYON_SERVICE}/tryon-status/{job_id}")
+            status = status_resp.json()
+            if status["status"] == "ready":
+                return status["result_url"]
+            if status["status"] == "error":
+                raise Exception(f"IDM-VTON error: {status.get('error')}")
+
+        raise Exception("IDM-VTON timeout after 5 minutes")
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "vexa-avatar"}
+    idol_ok = False
+    tryon_ok = False
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3) as c:
+            r = await c.get(f"{IDOL_SERVICE}/health")
+            idol_ok = r.status_code == 200
+    except Exception:
+        pass
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3) as c:
+            r = await c.get(f"{TRYON_SERVICE}/health")
+            tryon_ok = r.status_code == 200
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "service": "vexa-avatar",
+        "idol_service": "up" if idol_ok else "down",
+        "tryon_service": "up" if tryon_ok else "down",
+    }
 
 
 @app.post("/generate-avatar", dependencies=[Depends(verify_internal_token)])
 async def generate_avatar(req: AvatarRequest):
     """
-    Dev stub: returns the placeholder GLB served by the frontend.
-    Replace with the full SMPL-X pipeline (/generate-avatar-full) once the
-    SMPL-X model weights and mediapipe are installed.
+    Try local IDOL service first, fall back to placeholder GLB.
     """
+    # Try IDOL service
+    try:
+        logger.info("[generate-avatar] trying IDOL service at %s", IDOL_SERVICE)
+        result = await _idol_generate(req.photo_url, "user")
+        logger.info("[generate-avatar] IDOL returned: %s", result.get("avatar_url", "")[:80])
+        return result
+    except Exception as e:
+        logger.warning("[generate-avatar] IDOL unavailable (%s), falling back to placeholder", e)
+
+    # Fallback: placeholder GLB
     app_url = os.environ.get("NEXT_PUBLIC_APP_URL", "http://localhost:3000").rstrip("/")
     avatar_url = f"{app_url}/models/avatar.glb"
     logger.info("[generate-avatar] returning placeholder %s (photo_url length=%s)",
                 avatar_url, len(req.photo_url or ""))
     return {"avatar_url": avatar_url, "status": "ready"}
+
+
+@app.post("/tryon", dependencies=[Depends(verify_internal_token)])
+async def tryon(req: TryOnRequest):
+    """
+    Virtual try-on: calls local IDM-VTON service.
+    """
+    try:
+        logger.info("[tryon] calling IDM-VTON at %s", TRYON_SERVICE)
+        result_url = await _tryon_local(
+            req.person_image_url, req.garment_image_url,
+            req.user_id, req.product_id, req.garment_category
+        )
+        return {"result_url": result_url, "status": "ready"}
+    except Exception as e:
+        logger.error("[tryon] IDM-VTON failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/generate-avatar-full", dependencies=[Depends(verify_internal_token)])

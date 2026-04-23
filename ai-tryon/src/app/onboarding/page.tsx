@@ -7,6 +7,7 @@ import { MeasurementForm } from '@/components/MeasurementForm';
 import { AvatarViewer } from '@/components/AvatarViewer';
 import { ArrowLeft, Sparkles, UserCircle, Rocket, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
@@ -31,23 +32,39 @@ export default function OnboardingPage() {
         reader.readAsDataURL(photoFile!);
       });
 
-      // 2. Call generate API
+      // 2. Get session for auth
+      const { data: { session } } = await supabase.auth.getSession();
+
+      console.log('[onboarding] Calling /api/avatar/generate', {
+        userId: user?.id,
+        hasPhoto: !!photoBase64,
+        hasMeasurements: !!meas,
+        hasSession: !!session,
+      });
+
+      // 3. Call generate API with auth header
       const res = await fetch('/api/avatar/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
+        },
         body: JSON.stringify({
-          userId: user?.id,
+          userId: user?.id || session?.user?.id || 'anonymous',
           photoBase64,
           measurements: meas
         })
       });
 
-      if (!res.ok) throw new Error('Generation failed');
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('[onboarding] Generation failed:', errText);
+        throw new Error('Generation failed');
+      }
       const data = await res.json();
+      console.log('[onboarding] Avatar generated:', data);
       
-      // 3. Poll for result (simplified for wizard UX)
-      // In a real app we'd use useAvatar hook, but here we just wait or show success
-      setAvatarUrl(data.avatarUrl); // This might be null if async, but our API returns it if fast
+      setAvatarUrl(data.avatarUrl);
       
       // Artificial delay for UX "Wow" factor
       setTimeout(() => {
@@ -56,9 +73,11 @@ export default function OnboardingPage() {
       }, 3000);
 
     } catch (err) {
-      console.error(err);
+      console.error('[onboarding] Error:', err);
+      // Still set a placeholder avatar so the viewer shows something
+      setAvatarUrl('/models/avatar.glb');
       setIsGenerating(false);
-      setStep(5); // Proceed anyway for demo
+      setStep(5);
     }
   };
 
@@ -125,7 +144,7 @@ export default function OnboardingPage() {
                 <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center shrink-0">
                   <UserCircle className="w-6 h-6 text-white/40" />
                 </div>
-                <p className="text-sm text-white/60 leading-relaxed italic">"For best results, measure against your skin. The AI will account for fabric thickness based on the garment you try on."</p>
+                <p className="text-sm text-white/60 leading-relaxed italic">&quot;For best results, measure against your skin. The AI will account for fabric thickness based on the garment you try on.&quot;</p>
               </div>
               <MeasurementForm onSubmit={handleGenerate} isLoading={isGenerating} />
             </motion.div>

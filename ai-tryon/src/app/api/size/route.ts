@@ -19,18 +19,18 @@ export async function POST(req: NextRequest) {
     let minDelta = Infinity;
 
     for (const entry of sizeChart) {
-      const chestFit = computeFitLabel(measurements.chest, entry.chest_cm);
-      const waistFit = computeFitLabel(measurements.waist, entry.waist_cm);
-      const hipsFit = computeFitLabel(measurements.hips, entry.hips_cm);
+      const chestFit = computeFitLabel(measurements.chest_cm, entry.chest_cm);
+      const waistFit = computeFitLabel(measurements.waist_cm, entry.waist_cm);
+      const hipsFit = computeFitLabel(measurements.hips_cm, entry.hips_cm);
 
       // Skip sizes where it's too tight in any critical area
       if (chestFit === 'too_tight' || waistFit === 'too_tight' || hipsFit === 'too_tight') {
         continue;
       }
 
-      const totalDelta = (entry.chest_cm - measurements.chest) + 
-                         (entry.waist_cm - measurements.waist) + 
-                         (entry.hips_cm - measurements.hips);
+      const totalDelta = (entry.chest_cm - measurements.chest_cm) + 
+                         (entry.waist_cm - measurements.waist_cm) + 
+                         (entry.hips_cm - measurements.hips_cm);
       
       if (totalDelta < minDelta) {
         minDelta = totalDelta;
@@ -46,10 +46,10 @@ export async function POST(req: NextRequest) {
     const result: FitResult = {
       product_id: bestSize.product_id,
       recommended_size: bestSize.size,
-      fit_label: computeFitLabel(measurements.chest, bestSize.chest_cm),
-      chest_delta_cm: bestSize.chest_cm - measurements.chest,
-      waist_delta_cm: bestSize.waist_cm - measurements.waist,
-      hips_delta_cm: bestSize.hips_cm - measurements.hips,
+      fit_label: computeFitLabel(measurements.chest_cm, bestSize.chest_cm),
+      chest_delta_cm: bestSize.chest_cm - measurements.chest_cm,
+      waist_delta_cm: bestSize.waist_cm - measurements.waist_cm,
+      hips_delta_cm: bestSize.hips_cm - measurements.hips_cm,
     };
 
     return NextResponse.json(result);
