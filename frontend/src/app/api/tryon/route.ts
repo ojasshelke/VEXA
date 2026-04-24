@@ -1,6 +1,7 @@
 /**
  * POST /api/tryon
- * Core try-on engine. Accepts user photo + product image, returns AI-generated result.
+ * Core try-on engine. Calls the local CatVTON service at localhost:8002.
+ * No HuggingFace. No external AI fallbacks. No placeholders.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -9,11 +10,27 @@ import { isRateLimited } from '@/lib/rateLimit';
 import { validateApiKey } from '@/lib/apiKeyMiddleware';
 import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
 import type { MarketplaceContext } from '@/types';
-import type { ClothingAssetRow, Database, UserRow, TryOnResultRow } from '@/types/database';
+import type { ClothingAssetRow, Database } from '@/types/database';
 import { uploadToR2 } from '@/lib/r2';
 
-// Local IDM-VTON service URL (takes priority over HuggingFace)
-const LOCAL_TRYON_URL = process.env.LOCAL_TRYON_URL || process.env.TRYON_SERVICE_URL || '';
+// ─── Next.js route config ─────────────────────────────────────────────────────
+// CatVTON-MaskFree inference on M4 Pro MPS runs ~110 s at 50 steps. Force
+// the Node.js runtime (not edge) and a 15-minute max duration so Next.js
+// doesn't kill the handler. Also disable all response caching.
+export const runtime = 'nodejs';
+export const maxDuration = 900; // 15 minutes
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const CATVTON_URL = 'http://localhost:8002/tryon';
+// Timeout is deliberately large. Local CatVTON-MaskFree on M4 Pro MPS runs
+// 50 steps at ~2.2 s/step ≈ 110 s, and we want headroom for warm-up, image
+// downloads and the rare MPS recompile. Effectively unbounded for local dev.
+const CATVTON_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const CATVTON_RETRY_COUNT = 2;
+const CATVTON_RETRY_DELAY_MS = 2_500;
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -34,22 +51,27 @@ function validateSecureUrl(url: string, description: string): string {
     throw new Error(`${description} is not a valid URL`);
   }
 
-  if (ALLOWED_STORAGE_ORIGIN) {
-    const allowedOrigins = [
-      ALLOWED_STORAGE_ORIGIN,
-      'https://images.unsplash.com',
-      'https://cdn.shopify.com',
-    ];
-    const isAllowed =
-      allowedOrigins.some((o) => parsed.origin === o) ||
-      parsed.origin.endsWith('.supabase.co');
+  // In dev (no allowlist configured) let everything through
+  if (!ALLOWED_STORAGE_ORIGIN) return url;
 
-    if (!isAllowed) {
-      throw new Error(`${description} origin not allowed: ${parsed.origin}`);
-    }
+  const allowedOrigins = [
+    ALLOWED_STORAGE_ORIGIN,
+    'https://images.unsplash.com',
+    'https://cdn.shopify.com',
+  ];
+  const isAllowed =
+    allowedOrigins.some((o) => parsed.origin === o) ||
+    parsed.origin.endsWith('.supabase.co') ||
+    // R2 CDN domains (pub-*.r2.dev or custom domains via env)
+    parsed.origin.endsWith('.r2.dev') ||
+    (process.env.R2_PUBLIC_URL ? parsed.origin === new URL(process.env.R2_PUBLIC_URL).origin : false);
+
+  if (!isAllowed) {
+    throw new Error(`${description} origin not allowed: ${parsed.origin}`);
   }
   return url;
 }
+
 
 // ─── Supabase helper ──────────────────────────────────────────────────────────
 
@@ -78,12 +100,12 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
       .from('users')
       .select('marketplace_id')
       .eq('id', bodyUserId)
-      .single() as any;
+      .single() as { data: { marketplace_id: string | null } | null };
 
     if (!userRecord) {
       // Auto-provision guest user for the dev marketplace so local testing works.
       if (marketplaceCtx.marketplaceId === 'mkt_dev') {
-        await (supabase.from('users') as any).upsert({ id: bodyUserId, email: `${bodyUserId}@vexa.guest` });
+        await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: bodyUserId, email: `${bodyUserId}@vexa.guest` });
         return { userId: bodyUserId, marketplace: marketplaceCtx };
       }
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -119,7 +141,7 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
   if (process.env.NODE_ENV !== 'production') {
     const guestId = bodyUserId || 'demo_user_001';
     const supabase = getServiceSupabase();
-    await (supabase.from('users') as any).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
+    await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
     console.warn('[/api/tryon] Dev guest mode — bypassing auth for userId=%s', guestId);
     return {
       userId: guestId,
@@ -135,117 +157,127 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
   return NextResponse.json({ error: 'Unauthorized: Valid Bearer token or API key required' }, { status: 401 });
 }
 
-// ─── Upload data URL to Supabase storage, return signed URL ──────────────────
+// ─── Upload data: / blob: URI to R2, return a public HTTP URL ─────────────────
+/**
+ * CatVTON requires real HTTP(S) URLs — it cannot accept base64 data: URIs.
+ * When the frontend sends a camera capture (data:image/...) we upload it to R2
+ * first so CatVTON can download it.
+ *
+ * Falls back to a Supabase signed URL if R2 is not configured.
+ */
+async function resolveToPublicUrl(
+  url: string,
+  label: string,
+  userId: string,
+  supabase: SupabaseClient<Database>,
+): Promise<string> {
+  // Already a real HTTP URL — nothing to do
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
 
-async function uploadDataUrl(
-  dataUrl: string,
-  userId: string
-): Promise<string | null> {
-  // We first try R2 (as requested previously), but now we have a secondary 
-  // path in handleTryOn that uploads to HF if this fails or is skipped.
-  try {
-    const base64Data = dataUrl.split(',')[1];
-    if (!base64Data) return null;
+  // data: or blob: — upload to R2/Supabase and return a public URL
+  if (url.startsWith('data:') || url.startsWith('blob:')) {
+    const [meta, b64] = url.split(',');
+    if (!b64) throw new Error(`${label}: invalid data URI`);
+    const mime = meta?.slice(5).split(';')[0] || 'image/png';
+    const ext = mime.split('/')[1] || 'png';
+    const buffer = Buffer.from(b64, 'base64');
+    const filename = `uploads/${userId}_${label}_${Date.now()}.${ext}`;
 
-    const buffer = Buffer.from(base64Data, 'base64');
-    const filename = `uploads/${userId}_${Date.now()}.png`;
+    // Try R2 first
+    const r2Url = await uploadToR2(buffer, filename, mime);
+    if (r2Url) {
+      console.log(`[/api/tryon] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
+      return r2Url;
+    }
 
-    const publicUrl = await uploadToR2(buffer, filename, 'image/png');
-    return publicUrl;
-  } catch (e) {
-    console.warn('[/api/tryon] Storage upload skipped/failed, will rely on direct HF upload');
-    return null;
+    // Fallback: Supabase Storage signed URL
+    const { error } = await supabase.storage.from('avatars').upload(filename, buffer, { contentType: mime, upsert: true });
+    if (!error) {
+      const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
+      if (signed?.signedUrl) {
+        console.log(`[/api/tryon] ${label} data URI uploaded to Supabase Storage`);
+        return signed.signedUrl;
+      }
+    }
+
+    throw new Error(
+      `${label}: could not upload data URI to any public storage. ` +
+      'Configure R2_ACCOUNT_ID / R2_BUCKET_NAME or Supabase Storage.',
+    );
   }
+
+  throw new Error(`${label}: unsupported URL scheme — expected http(s):// or data:`);
 }
 
-/**
- * Converts a URL or Buffer to a base64 string formatted for Gradio Data injection.
- */
-/** IDM-VTON HuggingFace Space garment category (queue `data[2]`).
- *  The Space exposes a radio input with literal values "upper_body",
- *  "lower_body", "dresses". Anything else returns 400 Bad Request. */
-function idmVtonCategoryFromProductCategory(category: string | null | undefined): string {
+
+
+/** Map VEXA product category to CatVTON category for the /tryon API. */
+function catVtonCategoryFromProductCategory(category: string | null | undefined): string {
   const c = (category ?? 'tops').toLowerCase();
   if (c === 'dresses') return 'dresses';
   if (c === 'bottoms' || c === 'shoes') return 'lower_body';
   return 'upper_body';
 }
 
-/** Upload one image buffer to the Space's `/upload` endpoint. Returns the
- *  server-side path you can hand back via `{ path, meta }` on `/queue/join`. */
-async function uploadBufferToSpace(
-  spaceUrl: string,
-  buffer: Buffer,
-  mime: string,
-  filename: string,
-  authHeaders: Record<string, string>,
+// ─── CatVTON local service call ───────────────────────────────────────────────
+
+interface CatVTONResponse {
+  result_image: string; // base64-encoded JPEG (changed from PNG for 4-6× smaller payload)
+}
+
+/**
+ * Call the local CatVTON server with automatic retries.
+ * Returns the raw base64 PNG string on success.
+ * Throws on all-retries-exhausted or non-200.
+ */
+async function callCatVTON(
+  personImageUrl: string,
+  garmentImageUrl: string,
+  category: string,
 ): Promise<string> {
-  const blob = new Blob([buffer as unknown as ArrayBuffer], { type: mime });
-  const form = new FormData();
-  form.append('files', blob, filename);
-  const res = await fetch(`${spaceUrl}/upload`, {
-    method: 'POST',
-    headers: authHeaders, // do NOT set Content-Type; fetch sets the boundary
-    body: form,
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Space upload failed: ${res.status} ${body.slice(0, 200)}`);
-  }
-  const paths = (await res.json()) as string[];
-  if (!Array.isArray(paths) || !paths[0]) throw new Error('Space upload returned no path');
-  return paths[0];
-}
+  let lastError: string | null = null;
 
-/** Turn whatever we have (data URL / remote http URL / buffer) into a Buffer. */
-async function sourceToBuffer(source: string | Buffer): Promise<{ buffer: Buffer; mime: string } | null> {
-  try {
-    if (Buffer.isBuffer(source)) return { buffer: source, mime: 'image/png' };
-    if (source.startsWith('data:')) {
-      const [meta, b64] = source.split(',');
-      const mime = meta.slice(5).split(';')[0] || 'image/png';
-      return { buffer: Buffer.from(b64, 'base64'), mime };
+  for (let attempt = 1; attempt <= CATVTON_RETRY_COUNT; attempt++) {
+    try {
+      console.log('[/api/tryon] CatVTON call attempt %d → %s', attempt, CATVTON_URL);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), CATVTON_TIMEOUT_MS);
+
+      const response = await fetch(CATVTON_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_image_url: personImageUrl,
+          garment_image_url: garmentImageUrl,
+          category,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`CatVTON returned ${response.status}: ${body.slice(0, 300)}`);
+      }
+
+      const data = (await response.json()) as CatVTONResponse;
+      if (!data.result_image) {
+        throw new Error('CatVTON returned empty result_image');
+      }
+
+      return data.result_image;
+    } catch (err) {
+      lastError = (err as Error).message;
+      console.warn('[/api/tryon] Attempt %d failed: %s', attempt, lastError);
+      if (attempt < CATVTON_RETRY_COUNT) {
+        await new Promise((r) => setTimeout(r, CATVTON_RETRY_DELAY_MS));
+      }
     }
-    const res = await fetch(source);
-    if (!res.ok) return null;
-    const ab = await res.arrayBuffer();
-    return { buffer: Buffer.from(ab), mime: res.headers.get('content-type') || 'image/png' };
-  } catch {
-    return null;
   }
-}
 
-function base64ImagePayloadToArrayBuffer(raw: string): ArrayBuffer {
-  const payload = raw.startsWith('data:') ? raw.slice(raw.indexOf(',') + 1) : raw;
-  const buf = Buffer.from(payload, 'base64');
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
-async function toGradioBase64(source: string | Buffer): Promise<string | null> {
-  try {
-    let buffer: Buffer;
-    let mime = 'image/png';
-
-    if (typeof source === 'string' && source.startsWith('data:')) {
-      const parts = source.split(',');
-      mime = parts[0].split(':')[1].split(';')[0];
-      buffer = Buffer.from(parts[1], 'base64');
-    } else if (Buffer.isBuffer(source)) {
-      buffer = source;
-    } else if (typeof source === 'string' && source.startsWith('http')) {
-      const res = await fetch(source);
-      if (!res.ok) return null;
-      const ab = await res.arrayBuffer();
-      buffer = Buffer.from(ab);
-      mime = res.headers.get('content-type') || 'image/png';
-    } else {
-      return null;
-    }
-
-    return `data:${mime};base64,${buffer.toString('base64')}`;
-  } catch (e) {
-    return null;
-  }
+  throw new Error(`CatVTON service failed after ${CATVTON_RETRY_COUNT} attempts: ${lastError}`);
 }
 
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
@@ -277,7 +309,6 @@ export async function handleTryOn(
   supabase: SupabaseClient<Database>
 ): Promise<HandleTryOnResult> {
   const { userId, productId, userPhotoUrl, productImageUrl } = input;
-  const hfKey = process.env.HUGGINGFACE_API_KEY;
 
   // 1. Check cache
   const { data: cachedRecord } = await supabase
@@ -306,260 +337,43 @@ export async function handleTryOn(
     };
   }
 
-  // 2. Try LOCAL IDM-VTON first (no quota limits, no network dependency)
-  if (LOCAL_TRYON_URL && userPhotoUrl && productImageUrl) {
-    try {
-      console.log('[/api/tryon] Trying local IDM-VTON at', LOCAL_TRYON_URL);
-
-      const { data: clothingRows } = await supabase
-        .from('clothing_assets')
-        .select('category')
-        .eq('product_id', productId)
-        .limit(1);
-      const clothingCategory =
-        (clothingRows as Pick<ClothingAssetRow, 'category'>[] | null)?.[0]?.category ?? null;
-      const idmGarmentType = idmVtonCategoryFromProductCategory(clothingCategory);
-
-      // Start job
-      const startRes = await fetch(`${LOCAL_TRYON_URL}/tryon`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          person_image_url: userPhotoUrl,
-          garment_image_url: productImageUrl,
-          garment_category: idmGarmentType,
-          user_id: userId,
-          product_id: productId,
-        }),
-      });
-
-      if (startRes.ok) {
-        const job = await startRes.json() as { job_id: string };
-        const jobId = job.job_id;
-
-        // Poll for result (up to 5 min)
-        for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, 5000));
-          const statusRes = await fetch(`${LOCAL_TRYON_URL}/tryon-status/${jobId}`);
-          if (!statusRes.ok) continue;
-          const status = await statusRes.json() as { status: string; result_url?: string; error?: string };
-
-          if (status.status === 'ready' && status.result_url) {
-            // Download result from local server and re-upload to R2
-            const imgRes = await fetch(status.result_url);
-            if (imgRes.ok) {
-              arrayBuffer = await imgRes.arrayBuffer();
-              console.log('[/api/tryon] Local IDM-VTON succeeded!');
-              break;
-            }
-          }
-          if (status.status === 'error') {
-            lastAiError = `Local IDM-VTON: ${status.error}`;
-            console.warn('[/api/tryon] Local IDM-VTON error:', status.error);
-            break;
-          }
-        }
-      }
-    } catch (localErr) {
-      console.warn('[/api/tryon] Local IDM-VTON unavailable:', (localErr as Error).message);
-      lastAiError = `Local service down: ${(localErr as Error).message}`;
-    }
+  // 2. Resolve garment category from DB
+  if (!userPhotoUrl || !productImageUrl) {
+    throw new Error('Both userPhotoUrl and productImageUrl are required for try-on');
   }
 
-  // 3. Fallback to HF Space AI engine (if local didn't produce a result)
-  //
-  // yisol/IDM-VTON is a Gradio 4.x Space with an ImageEditor + File input pair.
-  // It rejects inline base64 via /queue/join with 400. The reliable path is:
-  //   1. POST each image to `${SPACE}/upload` (multipart) → returns server path
-  //   2. POST /queue/join with `{ path, meta: {_type:"gradio.FileData"} }` refs
-  //   3. Read SSE on `/queue/data?session_hash=…` until `process_completed`
-  //   4. `output.data[0]` is either a path string, a FileData object, or a
-  //      base64 data URL — handle all three.
-  //
-  // Configurable via HF_SPACE_URL so you can switch to a mirror fork when
-  // `yisol/IDM-VTON` is sleeping or has exhausted its ZeroGPU quota.
-  const SPACE_URL = (process.env.HF_SPACE_URL || 'https://yisol-idm-vton.hf.space').replace(/\/$/, '');
-  const authHeaders = { Authorization: `Bearer ${hfKey}` };
-  let arrayBuffer: ArrayBuffer | null = null;
-  let lastAiError: string | null = null;
+  const { data: clothingRows } = await supabase
+    .from('clothing_assets')
+    .select('category')
+    .eq('product_id', productId)
+    .limit(1);
+  const clothingCategory =
+    (clothingRows as Pick<ClothingAssetRow, 'category'>[] | null)?.[0]?.category ?? null;
+  const catVtonCategory = catVtonCategoryFromProductCategory(clothingCategory);
 
-  async function runIdmVtonOnce(attempt: number): Promise<ArrayBuffer> {
-    console.log('[/api/tryon] HF Space call attempt %d → %s', attempt, SPACE_URL);
+  // 3. Resolve both images to public HTTP URLs (uploads data: camera captures to R2)
+  //    CatVTON requires real HTTP(S) URLs — Pydantic HttpUrl rejects data: URIs.
+  const [resolvedPersonUrl, resolvedGarmentUrl] = await Promise.all([
+    resolveToPublicUrl(userPhotoUrl, 'userPhotoUrl', userId, supabase),
+    resolveToPublicUrl(productImageUrl, 'productImageUrl', userId, supabase),
+  ]);
 
-    const [userSrc, garmSrc] = await Promise.all([
-      sourceToBuffer(userPhotoUrl as string),
-      sourceToBuffer(productImageUrl as string),
-    ]);
-    if (!userSrc || !garmSrc) throw new Error('Failed to fetch/encode input images');
+  // 4. Call local CatVTON service with real HTTP URLs
+  const resultBase64 = await callCatVTON(resolvedPersonUrl, resolvedGarmentUrl, catVtonCategory);
 
-    const [humanPath, garmPath] = await Promise.all([
-      uploadBufferToSpace(SPACE_URL, userSrc.buffer, userSrc.mime, `human_${Date.now()}.png`, authHeaders),
-      uploadBufferToSpace(SPACE_URL, garmSrc.buffer, garmSrc.mime, `garment_${Date.now()}.png`, authHeaders),
-    ]);
-
-    const { data: clothingRows } = await supabase
-      .from('clothing_assets')
-      .select('category')
-      .eq('product_id', productId)
-      .limit(1);
-    const clothingCategory =
-      (clothingRows as Pick<ClothingAssetRow, 'category'>[] | null)?.[0]?.category ?? null;
-    const idmGarmentType = idmVtonCategoryFromProductCategory(clothingCategory);
-
-    const sessionHash = Math.random().toString(36).substring(2, 15);
-
-    const joinResponse = await fetch(`${SPACE_URL}/queue/join`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders },
-      body: JSON.stringify({
-        data: [
-          { background: { path: humanPath, meta: { _type: 'gradio.FileData' } }, layers: [], composite: null },
-          { path: garmPath, meta: { _type: 'gradio.FileData' } },
-          idmGarmentType,
-          true,
-          true,
-          30,
-          42,
-        ],
-        fn_index: 0,
-        session_hash: sessionHash,
-      }),
-    });
-
-    if (!joinResponse.ok) {
-      const body = await joinResponse.text().catch(() => '');
-      throw new Error(`AI queue join failed (${joinResponse.status}): ${body.slice(0, 200)}`);
-    }
-
-    const dataRes = await fetch(`${SPACE_URL}/queue/data?session_hash=${sessionHash}`, { headers: authHeaders });
-    if (!dataRes.ok) throw new Error(`SSE connect failed: ${dataRes.status}`);
-
-    const reader = dataRes.body?.getReader();
-    if (!reader) throw new Error('No SSE stream');
-
-    const decoder = new TextDecoder();
-    let resultData: unknown[] | null = null;
-    let sseBuffer = '';
-    const startTime = Date.now();
-
-    type ProcessCompleted = {
-      msg?: string;
-      success?: boolean;
-      output?: { data?: unknown[]; error?: string; [k: string]: unknown };
-      [k: string]: unknown;
-    };
-
-    try {
-      while (true) {
-        if (Date.now() - startTime > 300_000) throw new Error('AI timeout after 5 minutes');
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          let parsed: ProcessCompleted;
-          try {
-            parsed = JSON.parse(trimmed.slice(6)) as ProcessCompleted;
-          } catch {
-            continue; // skip heartbeat / non-JSON lines
-          }
-          if (parsed.msg === 'process_completed') {
-            if (parsed.success && parsed.output?.data) {
-              resultData = parsed.output.data;
-            } else {
-              // Surface the full Space error so users can see "no GPU available",
-              // "model loading", quota messages, stack traces, etc.
-              const outputDump = parsed.output
-                ? JSON.stringify(parsed.output).slice(0, 400)
-                : 'no output field';
-              const err = parsed.output?.error || outputDump;
-              throw new Error(`Space returned error: ${err}`);
-            }
-          }
-        }
-        if (resultData) break;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    if (!resultData) throw new Error('AI returned no result data');
-
-    const first = resultData[0];
-    let downloadUrl: string | null = null;
-    let bytes: ArrayBuffer | null = null;
-
-    if (typeof first === 'string') {
-      if (first.startsWith('data:')) {
-        bytes = base64ImagePayloadToArrayBuffer(first);
-      } else if (first.startsWith('http')) {
-        downloadUrl = first;
-      } else {
-        downloadUrl = `${SPACE_URL}/file=${first}`;
-      }
-    } else if (first && typeof first === 'object') {
-      const obj = first as { url?: string; path?: string };
-      if (obj.url) downloadUrl = obj.url;
-      else if (obj.path) downloadUrl = `${SPACE_URL}/file=${obj.path}`;
-    }
-
-    if (!bytes && downloadUrl) {
-      const imgRes = await fetch(downloadUrl, { headers: authHeaders });
-      if (!imgRes.ok) throw new Error(`Failed to download AI result: ${imgRes.status}`);
-      bytes = await imgRes.arrayBuffer();
-    }
-
-    if (!bytes) throw new Error('AI result could not be decoded');
-    return bytes;
-  }
-
-  if (hfKey && userPhotoUrl && productImageUrl) {
-    // One automatic retry: Space GPUs often cold-start and fail the first call
-    // within seconds, but respond on the next attempt after they warm up.
-    const MAX_ATTEMPTS = 2;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS && !arrayBuffer; attempt++) {
-      try {
-        arrayBuffer = await runIdmVtonOnce(attempt);
-      } catch (err) {
-        lastAiError = (err as Error).message;
-        console.warn('[/api/tryon] Attempt %d failed: %s', attempt, lastAiError);
-        if (attempt < MAX_ATTEMPTS) {
-          await new Promise((r) => setTimeout(r, 2500));
-        }
-      }
-    }
-  }
-
-  // No silent fallback: surface the actual AI failure to the client so the UI
-  // shows something actionable instead of a fake "result" that is really the
-  // user's own photo.
-  if (!arrayBuffer) {
-    const detail = lastAiError ? ` (${lastAiError})` : '';
-    throw new Error(
-      `AI engine failed to produce a result${detail}. Please try again in a moment.`,
-    );
-  }
-
-  // 4. Upload result to R2 (or fallback to inline base64 so the image still renders)
-  const filename = `tryons/tryon_${userId}_${productId}_${Date.now()}.png`;
-  const r2Url = await uploadToR2(Buffer.from(arrayBuffer), filename, 'image/png');
+  // 5. Upload result to R2 (CatVTON returns JPEG now — 4-6× smaller than PNG)
+  const imageBuffer = Buffer.from(resultBase64, 'base64');
+  const filename = `tryons/tryon_${userId}_${productId}_${Date.now()}.jpg`;
+  const r2Url = await uploadToR2(imageBuffer, filename, 'image/jpeg');
 
   let resultUrl: string;
   if (r2Url) {
     resultUrl = r2Url;
     console.log('[/api/tryon] Result successfully stored in R2');
   } else {
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-    resultUrl = `data:image/png;base64,${base64}`;
+    resultUrl = `data:image/jpeg;base64,${resultBase64}`;
     console.warn('[/api/tryon] R2 unavailable — serving base64 result inline');
   }
-  // `storagePath` is what we persist in tryon_results.result_url. With no R2,
-  // we keep the full base64 data URL so it works as an <img src> on re-read.
   const storagePath = resultUrl;
 
   // 6. Fit metadata
@@ -567,7 +381,7 @@ export async function handleTryOn(
   let recommendedSize = 'M';
 
   // Ensure user exists (Fix for FK violation if testing with guest accounts)
-  await (supabase.from('users') as any).upsert({ id: userId, email: `${userId}@vexa.guest` }).select();
+  await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: userId, email: `${userId}@vexa.guest` }).select();
 
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
   const { data: sizeChart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
@@ -578,9 +392,9 @@ export async function handleTryOn(
     recommendedSize = recommendation.recommendedSize;
   }
 
-  // 7. Cache result
+  // 6. Cache result
   console.log(`[/api/tryon] Caching result for user: ${userId}`);
-  const { error: insertError } = await (supabase.from('tryon_results') as any).insert([
+  const { error: insertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).insert([
     {
       user_id: userId,
       product_id: productId,
@@ -608,15 +422,6 @@ export async function handleTryOn(
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // Fail fast if the AI engine is not configured — better than silently returning
-  // the user's own photo as the "result" (which looks completely broken to the user).
-  if (!process.env.HUGGINGFACE_API_KEY) {
-    return NextResponse.json(
-      { error: 'HUGGINGFACE_API_KEY is not configured. Add it to .env.local' },
-      { status: 500 },
-    );
-  }
-
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
   if (await isRateLimited(ip, 10)) {
     return NextResponse.json({ error: 'Too many requests. Please wait 60 seconds.' }, { status: 429 });
@@ -659,6 +464,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (error: unknown) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error('[/api/tryon] Error:', err.message);
+
+    // Surface CatVTON service failures as 503
+    if (err.message.includes('CatVTON service failed') || err.message.includes('fetch failed')) {
+      return NextResponse.json(
+        { error: 'Try-on service unavailable. Please try again in a moment.' },
+        { status: 503 },
+      );
+    }
+
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
