@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 const STEPS = [
   { id: 'analyzing', text: "Analyzing body proportions...", icon: Scan },
-  { id: 'detecting', text: "Detecting clothing regions...", icon: Maximize },
+  { id: 'detecting', text: "Processing with Vexa AI...", icon: Maximize },
   { id: 'fitting', text: "Fitting garment to your posture...", icon: Wand2 },
   { id: 'enhancing', text: "Enhancing lighting & shadows...", icon: Sparkles }
 ];
@@ -56,18 +56,28 @@ export default function TryOnFlow() {
           throw new Error(errorData.error || `Error ${response.status}: Failed to process try-on`);
         }
 
-        const data = await response.json();
+        const data = await response.json() as {
+          result_url?: string;
+          resultUrl?: string;
+          error?: string;
+          status?: string;
+          cached?: boolean;
+        };
         
-        if (data.resultUrl) {
+        // Support both result_url (new FASHN) and resultUrl (legacy backward-compat alias)
+        const imageUrl = data.result_url ?? data.resultUrl;
+
+        if (imageUrl) {
           // Immediately show result and hide processor
           setTryOnResult({
             id: `${Date.now()}`,
             userId: currentUser?.id ?? session?.user?.id ?? 'demo_user_001',
             productId: selectedOutfit.id,
             originalImage: userPhotoUrl,
-            resultImage: data.resultUrl,
+            resultImage: imageUrl,
+            result_url: imageUrl,
             outfit: selectedOutfit,
-            aiAnalysis: data.aiAnalysis,
+            cached: data.cached ?? false,
             status: 'ready'
           });
           setIsProcessing(false);
@@ -79,11 +89,19 @@ export default function TryOnFlow() {
         console.error("Try-on failed:", error);
         setIsProcessing(false);
         setCurrentStep(0);
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : 'AI engine is currently busy. Please try again in a moment.',
-        );
+
+        let friendlyMessage = 'AI engine is currently busy. Please try again in a moment.';
+        if (error instanceof Error) {
+          if (
+            error.message.toLowerCase().includes('rate limit') ||
+            error.message.includes('429')
+          ) {
+            friendlyMessage = 'Vexa AI is busy right now. Please try again in a few minutes.';
+          } else {
+            friendlyMessage = error.message;
+          }
+        }
+        setErrorMessage(friendlyMessage);
       } finally {
         if (stepInterval) clearInterval(stepInterval);
       }

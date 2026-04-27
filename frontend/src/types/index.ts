@@ -56,28 +56,34 @@ export interface AvatarRecord {
 export interface TryOnRequest {
   userId: string;
   productId: string;
-  avatarGlbUrl: string;
-  clothingGlbUrl: string;
+  userPhotoUrl: string;
+  productImageUrl: string;
+  category?: 'tops' | 'bottoms' | 'one-pieces';
 }
 
 export interface TryOnResult {
-  id: string;
-  userId: string;
+  id?: string;
+  userId?: string;
   productId: string;
-  renderUrl?: string;
-  resultImage?: string; // used for favorites display
-  originalImage?: string; // used for comparison slider
-  outfit?: Outfit;      // linked outfit for favorites
+  /** The final URL of the AI-generated try-on image. */
+  result_url?: string;
+  /** Alias for result_url — used by ResultUI comparison slider. */
+  resultImage?: string;
+  /** Original uploaded user photo — used by ResultUI comparison slider. */
+  originalImage?: string;
+  /** Linked outfit for favorites display. */
+  outfit?: Outfit;
   fitScore?: number;
   sizeRecommendation?: string;
-  heatmapUrl?: string;
+  cached?: boolean;
   aiAnalysis?: {
     confidence: number;
     size: string;
     suggestion: string;
   };
-  status: 'ready' | 'error';
+  status: 'idle' | 'loading' | 'ready' | 'error';
   error?: string;
+  created_at?: string;
 }
 
 // ─── Archetype / Morph Engine ────────────────────────────────────────────────
@@ -185,4 +191,57 @@ export interface VideoJobStatusResponse {
   progressPercent: number;
   resultVideoUrl: string | null;
   errorMessage: string | null;
+}
+
+// ─── LightX Virtual Try-On ───────────────────────────────────────────────────
+
+export interface LightXTryOnRequest {
+  /** Public URL of the person photo */
+  imageUrl: string;
+  /** Public URL of the garment/style image */
+  styleImageUrl: string;
+}
+
+export interface LightXTryOnResponseBody {
+  orderId: string;
+  /** "init" on creation */
+  imageStatus?: string;
+  status?: string;
+}
+
+export interface LightXTryOnResponse {
+  /** Some versions return fields at the top level */
+  orderId?: string;
+  imageStatus?: string;
+  status?: string;
+  /** v2 API wraps the payload here */
+  body?: LightXTryOnResponseBody;
+}
+
+export interface LightXStatusRequest {
+  orderId: string;
+}
+
+export interface LightXStatusResponseBody {
+  /** "init" | "active" | "failed" */
+  imageStatus?: string;
+  status?: string;
+  /** Output image URL when imageStatus/status === "active" */
+  outputImageUrl?: string;
+  output?: string;
+}
+
+export interface LightXStatusResponse {
+  /** Present in flat responses */
+  imageStatus?: string;
+  status?: string;
+  outputImageUrl?: string;
+  output?: string;
+  /** v2 API wraps payload here */
+  body?: LightXStatusResponseBody;
+}
+
+export interface LightXOutputData {
+  orderId: string;
+  outputUrl: string;
 }

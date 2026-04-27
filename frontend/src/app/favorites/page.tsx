@@ -59,7 +59,7 @@ export default function FavoritesPage() {
           >
             {favorites.map((fav, i) => (
               <motion.div
-                key={fav.id}
+                key={fav.id ?? fav.productId}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
@@ -83,7 +83,7 @@ export default function FavoritesPage() {
                       <Download className="w-4 h-4" />
                     </button>
                     <button 
-                      onClick={() => removeFavorite(fav.id)}
+                      onClick={() => removeFavorite(fav.id ?? '')}
                       className="p-3 rounded-full bg-rose-500/20 hover:bg-rose-500/40 backdrop-blur-md text-rose-300 border border-rose-500/30 hover:scale-110 shadow-xl transition-all"
                       title="Remove"
                     >

@@ -100,7 +100,7 @@ export function TryOnOverlay({
         <div className="border-t border-white/10 p-4 space-y-4">
           {/* 3D Viewer */}
           <AvatarViewer
-            glbUrl={status === 'ready' ? (result?.renderUrl ?? avatarGlbUrl) : avatarGlbUrl}
+            glbUrl={status === 'ready' ? (result?.result_url ?? result?.resultImage ?? avatarGlbUrl) : avatarGlbUrl}
             className="h-72"
             showControls
           />

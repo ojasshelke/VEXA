@@ -1,7 +1,6 @@
 /**
  * POST /api/tryon
- * Core try-on engine. Calls the local CatVTON service at localhost:8002.
- * No HuggingFace. No external AI fallbacks. No placeholders.
+ * Core try-on engine powered by LightX Virtual Try-On API.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -9,28 +8,22 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
 import { validateApiKey } from '@/lib/apiKeyMiddleware';
 import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
-import type { MarketplaceContext } from '@/types';
+import type { MarketplaceContext, LightXTryOnResponse, LightXStatusResponse } from '@/types';
 import type { ClothingAssetRow, Database } from '@/types/database';
 import { uploadToR2 } from '@/lib/r2';
 
 // ─── Next.js route config ─────────────────────────────────────────────────────
-// CatVTON-MaskFree inference on M4 Pro MPS runs ~110 s at 50 steps. Force
-// the Node.js runtime (not edge) and a 15-minute max duration so Next.js
-// doesn't kill the handler. Also disable all response caching.
 export const runtime = 'nodejs';
-export const maxDuration = 900; // 15 minutes
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const CATVTON_URL = 'http://localhost:8002/tryon';
-// Timeout is deliberately large. Local CatVTON-MaskFree on M4 Pro MPS runs
-// 50 steps at ~2.2 s/step ≈ 110 s, and we want headroom for warm-up, image
-// downloads and the rare MPS recompile. Effectively unbounded for local dev.
-const CATVTON_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
-const CATVTON_RETRY_COUNT = 2;
-const CATVTON_RETRY_DELAY_MS = 2_500;
+// ─── LightX API constants ─────────────────────────────────────────────────────
+const LIGHTX_TRYON_URL = 'https://api.lightxeditor.com/external/api/v2/aivirtualtryon';
+const LIGHTX_STATUS_URL = 'https://api.lightxeditor.com/external/api/v1/order-status';
+const LIGHTX_POLL_INTERVAL_MS = 3000;
+const LIGHTX_MAX_POLLS = 20;
+const LIGHTX_FETCH_TIMEOUT_MS = 30_000;
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -41,7 +34,6 @@ const ALLOWED_STORAGE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL
 function validateSecureUrl(url: string, description: string): string {
   if (!url) throw new Error(`${description} is required`);
 
-  // data: and blob: URLs are local — no origin to validate, allow immediately
   if (url.startsWith('data:') || url.startsWith('blob:')) return url;
 
   let parsed: URL;
@@ -51,7 +43,6 @@ function validateSecureUrl(url: string, description: string): string {
     throw new Error(`${description} is not a valid URL`);
   }
 
-  // In dev (no allowlist configured) let everything through
   if (!ALLOWED_STORAGE_ORIGIN) return url;
 
   const allowedOrigins = [
@@ -62,7 +53,6 @@ function validateSecureUrl(url: string, description: string): string {
   const isAllowed =
     allowedOrigins.some((o) => parsed.origin === o) ||
     parsed.origin.endsWith('.supabase.co') ||
-    // R2 CDN domains (pub-*.r2.dev or custom domains via env)
     parsed.origin.endsWith('.r2.dev') ||
     (process.env.R2_PUBLIC_URL ? parsed.origin === new URL(process.env.R2_PUBLIC_URL).origin : false);
 
@@ -71,7 +61,6 @@ function validateSecureUrl(url: string, description: string): string {
   }
   return url;
 }
-
 
 // ─── Supabase helper ──────────────────────────────────────────────────────────
 
@@ -103,7 +92,6 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
       .single() as { data: { marketplace_id: string | null } | null };
 
     if (!userRecord) {
-      // Auto-provision guest user for the dev marketplace so local testing works.
       if (marketplaceCtx.marketplaceId === 'mkt_dev') {
         await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: bodyUserId, email: `${bodyUserId}@vexa.guest` });
         return { userId: bodyUserId, marketplace: marketplaceCtx };
@@ -136,8 +124,6 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
     return { userId: user.id, marketplace: null };
   }
 
-  // Dev-only guest fallback: allow unauthenticated requests when running locally.
-  // NEVER matches in production (NODE_ENV === 'production').
   if (process.env.NODE_ENV !== 'production') {
     const guestId = bodyUserId || 'demo_user_001';
     const supabase = getServiceSupabase();
@@ -157,24 +143,16 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
   return NextResponse.json({ error: 'Unauthorized: Valid Bearer token or API key required' }, { status: 401 });
 }
 
-// ─── Upload data: / blob: URI to R2, return a public HTTP URL ─────────────────
-/**
- * CatVTON requires real HTTP(S) URLs — it cannot accept base64 data: URIs.
- * When the frontend sends a camera capture (data:image/...) we upload it to R2
- * first so CatVTON can download it.
- *
- * Falls back to a Supabase signed URL if R2 is not configured.
- */
+// ─── Resolve data:/blob: URI to a public HTTP URL ─────────────────────────────
+
 async function resolveToPublicUrl(
   url: string,
   label: string,
   userId: string,
   supabase: SupabaseClient<Database>,
 ): Promise<string> {
-  // Already a real HTTP URL — nothing to do
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
 
-  // data: or blob: — upload to R2/Supabase and return a public URL
   if (url.startsWith('data:') || url.startsWith('blob:')) {
     const [meta, b64] = url.split(',');
     if (!b64) throw new Error(`${label}: invalid data URI`);
@@ -183,19 +161,17 @@ async function resolveToPublicUrl(
     const buffer = Buffer.from(b64, 'base64');
     const filename = `uploads/${userId}_${label}_${Date.now()}.${ext}`;
 
-    // Try R2 first
     const r2Url = await uploadToR2(buffer, filename, mime);
     if (r2Url) {
-      console.log(`[/api/tryon] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
+      console.log(`[LightX] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
       return r2Url;
     }
 
-    // Fallback: Supabase Storage signed URL
     const { error } = await supabase.storage.from('avatars').upload(filename, buffer, { contentType: mime, upsert: true });
     if (!error) {
       const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
       if (signed?.signedUrl) {
-        console.log(`[/api/tryon] ${label} data URI uploaded to Supabase Storage`);
+        console.log(`[LightX] ${label} data URI uploaded to Supabase Storage`);
         return signed.signedUrl;
       }
     }
@@ -209,75 +185,84 @@ async function resolveToPublicUrl(
   throw new Error(`${label}: unsupported URL scheme — expected http(s):// or data:`);
 }
 
+// ─── LightX API call + polling ────────────────────────────────────────────────
 
+async function callLightX(personImageUrl: string, garmentImageUrl: string): Promise<string> {
+  const apiKey = process.env.LIGHTX_API_KEY;
+  if (!apiKey) {
+    throw new Error('LIGHTX_API_KEY is not configured');
+  }
 
-/** Map VEXA product category to CatVTON category for the /tryon API. */
-function catVtonCategoryFromProductCategory(category: string | null | undefined): string {
-  const c = (category ?? 'tops').toLowerCase();
-  if (c === 'dresses') return 'dresses';
-  if (c === 'bottoms' || c === 'shoes') return 'lower_body';
-  return 'upper_body';
-}
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+  };
 
-// ─── CatVTON local service call ───────────────────────────────────────────────
+  // Step 1 — submit try-on job
+  console.log('[LightX] Submitting try-on job…');
+  const submitRes = await fetch(LIGHTX_TRYON_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ imageUrl: personImageUrl, styleImageUrl: garmentImageUrl }),
+    signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+  });
 
-interface CatVTONResponse {
-  result_image: string; // base64-encoded JPEG (changed from PNG for 4-6× smaller payload)
-}
+  if (!submitRes.ok) {
+    const body = await submitRes.text().catch(() => '');
+    throw new Error(`[LightX] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
+  }
 
-/**
- * Call the local CatVTON server with automatic retries.
- * Returns the raw base64 PNG string on success.
- * Throws on all-retries-exhausted or non-200.
- */
-async function callCatVTON(
-  personImageUrl: string,
-  garmentImageUrl: string,
-  category: string,
-): Promise<string> {
-  let lastError: string | null = null;
+  const submitRaw = (await submitRes.json()) as LightXTryOnResponse;
+  console.log('[LightX] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
 
-  for (let attempt = 1; attempt <= CATVTON_RETRY_COUNT; attempt++) {
-    try {
-      console.log('[/api/tryon] CatVTON call attempt %d → %s', attempt, CATVTON_URL);
+  // v2 API may wrap payload in a `body` field
+  const submitData = submitRaw.body ?? submitRaw;
+  const orderId = submitData.orderId;
+  if (!orderId) {
+    throw new Error(`[LightX] Submit response missing orderId. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
+  }
+  console.log(`[LightX] Job created — orderId=${orderId}`);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), CATVTON_TIMEOUT_MS);
+  // Step 2 — poll for completion
+  for (let poll = 1; poll <= LIGHTX_MAX_POLLS; poll++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, LIGHTX_POLL_INTERVAL_MS));
 
-      const response = await fetch(CATVTON_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          person_image_url: personImageUrl,
-          garment_image_url: garmentImageUrl,
-          category,
-        }),
-        signal: controller.signal,
-      });
+    const statusRes = await fetch(LIGHTX_STATUS_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ orderId }),
+      signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+    });
 
-      clearTimeout(timeoutId);
+    if (!statusRes.ok) {
+      const errBody = await statusRes.text().catch(() => '');
+      throw new Error(`[LightX] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
+    }
 
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`CatVTON returned ${response.status}: ${body.slice(0, 300)}`);
+    const statusRaw = (await statusRes.json()) as LightXStatusResponse;
+    const statusData = statusRaw.body ?? statusRaw;
+
+    // Accept both `imageStatus` (v2) and `status` (v1) field names
+    const currentStatus = statusData.imageStatus ?? statusData.status ?? '';
+    // Accept both `outputImageUrl` (v2) and `output` (v1) field names
+    const outputUrl = statusData.outputImageUrl ?? statusData.output;
+
+    console.log(`[LightX] Poll ${poll}/${LIGHTX_MAX_POLLS}: status=${currentStatus}`);
+
+    if (currentStatus === 'active') {
+      if (!outputUrl) {
+        throw new Error('[LightX] Status is active but output URL is missing');
       }
+      console.log(`[LightX] Try-on complete: ${outputUrl}`);
+      return outputUrl;
+    }
 
-      const data = (await response.json()) as CatVTONResponse;
-      if (!data.result_image) {
-        throw new Error('CatVTON returned empty result_image');
-      }
-
-      return data.result_image;
-    } catch (err) {
-      lastError = (err as Error).message;
-      console.warn('[/api/tryon] Attempt %d failed: %s', attempt, lastError);
-      if (attempt < CATVTON_RETRY_COUNT) {
-        await new Promise((r) => setTimeout(r, CATVTON_RETRY_DELAY_MS));
-      }
+    if (currentStatus === 'failed') {
+      throw new Error(`[LightX] Job failed (orderId=${orderId})`);
     }
   }
 
-  throw new Error(`CatVTON service failed after ${CATVTON_RETRY_COUNT} attempts: ${lastError}`);
+  throw new Error(`[LightX] Timed out after ${LIGHTX_MAX_POLLS} polls (${(LIGHTX_MAX_POLLS * LIGHTX_POLL_INTERVAL_MS) / 1000}s)`);
 }
 
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
@@ -316,17 +301,19 @@ export async function handleTryOn(
     .select('result_url, fit_label, recommended_size')
     .eq('user_id', userId)
     .eq('product_id', productId)
+    .not('result_url', 'is', null)
+    .neq('result_url', '')
     .single();
 
   const cached = cachedRecord as CachedTryOnRow | null;
   if (cached?.result_url) {
     let finalUrl = cached.result_url;
-    // http(s):// URLs and data: URLs are usable as-is; anything else is a storage path.
     if (!finalUrl.startsWith('http') && !finalUrl.startsWith('data:')) {
       const { data: signedData } = await supabase.storage.from('avatars').createSignedUrl(finalUrl, 3600);
       if (signedData?.signedUrl) finalUrl = signedData.signedUrl;
     }
     const fitLabel = cached.fit_label ?? 'True to size';
+    console.log('[LightX] Cache hit for', userId, productId);
     return {
       resultUrl: finalUrl,
       storagePath: cached.result_url,
@@ -337,50 +324,46 @@ export async function handleTryOn(
     };
   }
 
-  // 2. Resolve garment category from DB
   if (!userPhotoUrl || !productImageUrl) {
     throw new Error('Both userPhotoUrl and productImageUrl are required for try-on');
   }
 
-  const { data: clothingRows } = await supabase
-    .from('clothing_assets')
-    .select('category')
-    .eq('product_id', productId)
-    .limit(1);
-  const clothingCategory =
-    (clothingRows as Pick<ClothingAssetRow, 'category'>[] | null)?.[0]?.category ?? null;
-  const catVtonCategory = catVtonCategoryFromProductCategory(clothingCategory);
-
-  // 3. Resolve both images to public HTTP URLs (uploads data: camera captures to R2)
-  //    CatVTON requires real HTTP(S) URLs — Pydantic HttpUrl rejects data: URIs.
+  // 2. Resolve both images to public HTTP URLs (handles data: URIs)
   const [resolvedPersonUrl, resolvedGarmentUrl] = await Promise.all([
     resolveToPublicUrl(userPhotoUrl, 'userPhotoUrl', userId, supabase),
     resolveToPublicUrl(productImageUrl, 'productImageUrl', userId, supabase),
   ]);
 
-  // 4. Call local CatVTON service with real HTTP URLs
-  const resultBase64 = await callCatVTON(resolvedPersonUrl, resolvedGarmentUrl, catVtonCategory);
+  // 3. Call LightX Virtual Try-On API
+  const lightxResultUrl = await callLightX(resolvedPersonUrl, resolvedGarmentUrl);
 
-  // 5. Upload result to R2 (CatVTON returns JPEG now — 4-6× smaller than PNG)
-  const imageBuffer = Buffer.from(resultBase64, 'base64');
-  const filename = `tryons/tryon_${userId}_${productId}_${Date.now()}.jpg`;
-  const r2Url = await uploadToR2(imageBuffer, filename, 'image/jpeg');
+  // 4. Mirror result to R2 for persistence (LightX URLs may expire)
+  let resultUrl = lightxResultUrl;
+  let storagePath = lightxResultUrl;
 
-  let resultUrl: string;
-  if (r2Url) {
-    resultUrl = r2Url;
-    console.log('[/api/tryon] Result successfully stored in R2');
-  } else {
-    resultUrl = `data:image/jpeg;base64,${resultBase64}`;
-    console.warn('[/api/tryon] R2 unavailable — serving base64 result inline');
+  try {
+    const imageRes = await fetch(lightxResultUrl, { signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS) });
+    if (imageRes.ok) {
+      const arrayBuf = await imageRes.arrayBuffer();
+      const imageBuffer = Buffer.from(arrayBuf);
+      const contentType = imageRes.headers.get('content-type') ?? 'image/png';
+      const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+      const filename = `tryons/tryon_${userId}_${productId}_${Date.now()}.${ext}`;
+      const r2Url = await uploadToR2(imageBuffer, filename, contentType);
+      if (r2Url) {
+        resultUrl = r2Url;
+        storagePath = r2Url;
+        console.log('[LightX] Result mirrored to R2:', r2Url.slice(0, 80));
+      }
+    }
+  } catch (mirrorErr) {
+    console.warn('[LightX] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
   }
-  const storagePath = resultUrl;
 
-  // 6. Fit metadata
+  // 5. Fit metadata
   let fitLabel = 'True to size';
   let recommendedSize = 'M';
 
-  // Ensure user exists (Fix for FK violation if testing with guest accounts)
   await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: userId, email: `${userId}@vexa.guest` }).select();
 
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
@@ -393,8 +376,8 @@ export async function handleTryOn(
   }
 
   // 6. Cache result
-  console.log(`[/api/tryon] Caching result for user: ${userId}`);
-  const { error: insertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).insert([
+  console.log(`[LightX] Caching result for user: ${userId}`);
+  const { error: upsertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).upsert(
     {
       user_id: userId,
       product_id: productId,
@@ -402,11 +385,14 @@ export async function handleTryOn(
       result_url: storagePath,
       fit_label: fitLabel,
       recommended_size: recommendedSize,
-    }
-  ]);
+      status: 'ready',
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,product_id' }
+  );
 
-  if (insertError) {
-    console.warn('[/api/tryon] Failed to cache result:', insertError.message);
+  if (upsertError) {
+    console.warn('[LightX] Failed to cache result:', upsertError.message);
   }
 
   return {
@@ -440,39 +426,41 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'productId is required' }, { status: 400 });
     }
 
-    // Validate URLs — data: and blob: pass through, external URLs are origin-checked
-    const validatedPhotoUrl = userPhotoUrl ? validateSecureUrl(userPhotoUrl, 'userPhotoUrl') : undefined;
-    const validatedProductUrl = productImageUrl ? validateSecureUrl(productImageUrl, 'productImageUrl') : undefined;
+    if (!userPhotoUrl || !productImageUrl) {
+      return NextResponse.json({ error: 'userPhotoUrl and productImageUrl are required' }, { status: 400 });
+    }
+
+    const validatedPhotoUrl = validateSecureUrl(userPhotoUrl, 'userPhotoUrl');
+    const validatedProductUrl = validateSecureUrl(productImageUrl, 'productImageUrl');
 
     const authResult = await authenticateRequest(req, userId ?? '');
     if (authResult instanceof NextResponse) return authResult;
 
     const supabase = getServiceSupabase();
     const result = await handleTryOn(
-      { userId: authResult.userId, productId, userPhotoUrl: validatedPhotoUrl, productImageUrl: validatedProductUrl },
+      {
+        userId: authResult.userId,
+        productId,
+        userPhotoUrl: validatedPhotoUrl,
+        productImageUrl: validatedProductUrl,
+      },
       supabase
     );
 
     return NextResponse.json({
+      result_url: result.resultUrl,
       resultUrl: result.resultUrl,
       cached: result.cached,
+      status: 'ready',
       fitLabel: result.fitLabel,
       recommendedSize: result.recommendedSize,
       fitScore: result.fitScore,
     }, { status: 200 });
 
-  } catch (error: unknown) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    console.error('[/api/tryon] Error:', err.message);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error('[LightX] Error:', error.message);
 
-    // Surface CatVTON service failures as 503
-    if (err.message.includes('CatVTON service failed') || err.message.includes('fetch failed')) {
-      return NextResponse.json(
-        { error: 'Try-on service unavailable. Please try again in a moment.' },
-        { status: 503 },
-      );
-    }
-
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

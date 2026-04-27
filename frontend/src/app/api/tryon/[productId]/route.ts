@@ -79,10 +79,10 @@ export async function POST(req: NextRequest, { params }: RouteContext): Promise<
       id: `res_${productId}_${authenticatedUserId}_${Date.now()}`,
       userId: authenticatedUserId,
       productId,
-      renderUrl: tryOnData.resultUrl,
+      result_url: tryOnData.resultUrl,
+      resultImage: tryOnData.resultUrl,
       fitScore,
       sizeRecommendation: tryOnData.recommendedSize,
-      heatmapUrl: heatmapUrl ?? undefined,
       status: 'ready',
     };
 
