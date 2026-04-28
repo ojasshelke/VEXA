@@ -68,14 +68,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const supabase = getSupabase();
 
-    const { error: insertError } = await supabase.from('usage_logs').insert({
-      endpoint: 'ar_session',
-      user_id: body.userId,
-      product_id: body.productId,
-    });
+    try {
+      const { error: insertError } = await supabase.from('usage_logs').insert({
+        api_key_id: null,
+        endpoint: 'ar_session',
+        status: 200,
+        response_time_ms: 0
+      });
 
-    if (insertError) {
-      console.warn('[/api/ar/session] usage_logs insert:', insertError.message);
+      if (insertError) {
+        console.warn('[/api/ar/session] usage_logs insert:', insertError.message);
+      }
+    } catch (e) {
+      console.warn('[/api/ar/session] usage_logs insert threw:', e);
     }
 
     const sessionToken = `ar_${crypto.randomUUID()}`;

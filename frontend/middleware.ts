@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { hashApiKey } from '@/lib/crypto';
 
 export async function middleware(req: NextRequest) {
   // If the route is /api/keys/..., let it pass so the dashboard can generate/list keys
@@ -26,25 +27,26 @@ export async function middleware(req: NextRequest) {
   });
 
   // Query Supabase api_keys table
+  const hashedKey = await hashApiKey(apiKeyHeader);
   const { data: keyRecord, error: keyError } = await supabase
     .from('api_keys')
-    .select('id, key, status, requests_count, monthly_limit')
-    .eq('key', apiKeyHeader)
+    .select('id, status, call_count, monthly_limit')
+    .eq('key_hash', hashedKey)
     .single();
 
   if (keyError || !keyRecord || keyRecord.status !== 'active') {
     return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
   }
 
-  if (keyRecord.requests_count >= keyRecord.monthly_limit) {
+  if (keyRecord.call_count >= keyRecord.monthly_limit) {
     return NextResponse.json({ error: "Monthly limit exceeded" }, { status: 429 });
   }
 
-  // Increment requests_count by 1
-  const newCount = keyRecord.requests_count + 1;
+  // Increment call_count by 1
+  const newCount = keyRecord.call_count + 1;
   await supabase
     .from('api_keys')
-    .update({ requests_count: newCount })
+    .update({ call_count: newCount })
     .eq('id', keyRecord.id);
 
   // Insert row into usage_logs
@@ -55,7 +57,7 @@ export async function middleware(req: NextRequest) {
       api_key_id: keyRecord.id,
       endpoint: req.nextUrl.pathname,
       status: 200,
-      response_time_ms: Math.floor(Math.random() * 800) + 150,
+      response_time_ms: 0,
       timestamp: new Date().toISOString()
     });
 

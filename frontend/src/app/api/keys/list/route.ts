@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const authHeader = req.headers.get('Authorization');
+    const adminSecret = process.env.VEXA_ADMIN_KEY;
+
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized — Admin token required' }, { status: 401 });
+    }
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { hashApiKey } from '@/lib/crypto';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,10 +21,12 @@ export async function GET(req: NextRequest) {
       auth: { persistSession: false }
     });
 
+    const hashedKey = await hashApiKey(key);
+
     const { data: apiKeyRecord, error } = await supabase
       .from('api_keys')
       .select('marketplace_name, status')
-      .eq('key', key)
+      .eq('key_hash', hashedKey)
       .single();
 
     if (error || !apiKeyRecord) {

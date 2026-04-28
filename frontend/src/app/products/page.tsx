@@ -25,7 +25,7 @@ export default function ProductsPage() {
   const [errorMap, setErrorMap] = useState<Record<string, string>>({});
 
   // On-demand try-on: fires only when a user explicitly clicks "Try On" on a card.
-  // This replaces the previous auto-batch that hammered HuggingFace with 12
+  // This replaces the previous auto-batch that hammered Fashn.ai with 12
   // parallel calls on every mount.
   const runTryOn = useCallback(
     async (product: Outfit) => {

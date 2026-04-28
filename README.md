@@ -1,48 +1,58 @@
-# VEXA — AI Virtual Try-On Platform
+<div align="center">
+  <img src="https://raw.githubusercontent.com/ojasshelke/VEXA/master/frontend/public/icon.png" width="100" height="100" alt="VEXA Logo" style="border-radius: 20px; box-shadow: 0 0 20px rgba(190,242,100,0.4);" onerror="this.src='https://via.placeholder.com/100?text=VEXA'">
+  
+  <h1 style="border-bottom: none; margin-bottom: 0;">VEXA — AI Virtual Try-On Platform</h1>
+  
+  <p><b>Turn any selfie into a 3D avatar. Try on any garment instantly.</b></p>
 
-> **Turn any selfie into a 3D avatar. Try on any garment instantly.**
-> VEXA is a B2B SaaS platform that gives fashion marketplaces photorealistic virtual try-on, powered by IDOL (CVPR 2025) for 3D avatars and IDM-VTON (ECCV 2024) for garment transfer.
+  <p>
+    <img src="https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js" alt="Next.js" />
+    <img src="https://img.shields.io/badge/Python-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/Three.js-WebGL-black?style=for-the-badge&logo=three.js" alt="Three.js" />
+    <img src="https://img.shields.io/badge/Supabase-DB-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
+    <img src="https://img.shields.io/badge/AI-Fashn.ai-BEF264?style=for-the-badge&logo=openai&logoColor=black" alt="Fashn.ai" />
+  </p>
+</div>
 
-```
+> VEXA is a B2B SaaS platform that gives fashion marketplaces photorealistic virtual try-on, powered by IDOL (CVPR 2025) for 3D avatars and Fashn.ai for seamless garment transfer.
+
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        VEXA PIPELINE                            │
 │                                                                 │
-│  User Selfie ──► IDOL (3D Avatar) ──► AvatarViewer (Three.js)  │
+│  User Selfie ──► IDOL (3D Avatar) ──► AvatarViewer (Three.js)   │
 │                                                                 │
-│  User Photo + Garment ──► IDM-VTON ──► Try-On Result Image     │
+│  User Photo + Garment ──► Fashn.ai API ──► Try-On Result Image  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Running Services
+### 🚀 Running Services
 
 | Service | What it does | Port | Tech |
 |---------|-------------|------|------|
-| **Frontend** | Web app — onboarding, avatar viewer, try-on UI, dashboard | `:3000` | Next.js 16, React 19, Three.js |
-| **VEXA Backend** | Avatar pipeline proxy, SMPL-X fallback, try-on routing | `:8000` | Python FastAPI |
+| **Frontend** | Web app — onboarding, avatar viewer, try-on UI, dashboard | `:3000` | Next.js, React 19, Three.js |
+| **VEXA Backend** | Avatar pipeline proxy, SMPL-X fallback, routing | `:8000` | Python FastAPI |
 | **IDOL Avatar** | Generates 3D `.glb` avatar from a single photo | `:8001` | PyTorch, HuggingFace |
-| **IDM-VTON Try-On** | Transfers garment onto person photo (diffusion model) | `:8002` | PyTorch, Diffusers |
-| **Supabase** | Auth, PostgreSQL database, file storage | Cloud | Supabase (hosted) |
+| **Fashn.ai** | Transfers garment onto person photo (Cloud API) | `Cloud` | REST API |
+| **Supabase** | Auth, PostgreSQL database, file storage | `Cloud` | Supabase |
 
 ---
 
 ## Architecture
 
-```
 VEXA/
 ├── frontend/          # Next.js 16, React 19, Three.js, Zustand
-├── backend/           # Python FastAPI — avatar pipeline + try-on proxy
-├── ai-tryon/          # Alternative Next.js try-on module
+├── backend/           # Python FastAPI — avatar pipeline proxy
 ├── vexa-mobile-sdk/   # React Native SDK for marketplace embed
 └── start_all.sh       # One command to start everything (Mac)
 ```
 
 External AI repos live **outside** this repo:
 
-```
+```text
 ~/Documents/
 ├── VEXA/              # ← This repo (clone from GitHub)
-├── IDOL/              # Clone from github.com/yiyuzhuang/IDOL
-└── IDM-VTON/          # Clone from github.com/yisol/IDM-VTON
+└── IDOL/              # Clone from github.com/yiyuzhuang/IDOL
 ```
 
 ---
@@ -136,7 +146,6 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ## Step 1 — Clone All Repos
 
-```bash
 # Clone VEXA main repo
 git clone https://github.com/ojasshelke/VEXA.git
 cd VEXA
@@ -145,23 +154,18 @@ cd VEXA
 cd ~/Documents          # Mac
 # cd %USERPROFILE%\Documents   # Windows
 git clone https://github.com/yiyuzhuang/IDOL.git
-
-# Clone IDM-VTON (virtual try-on model) — place OUTSIDE VEXA
-git clone https://github.com/yisol/IDM-VTON.git
 ```
 
 After cloning you should have:
 
-```
+```text
 ~/Documents/
 ├── VEXA/
 │   ├── frontend/
 │   ├── backend/
-│   ├── ai-tryon/
 │   ├── vexa-mobile-sdk/
 │   └── start_all.sh
-├── IDOL/
-└── IDM-VTON/
+└── IDOL/
 ```
 
 ---
@@ -253,57 +257,7 @@ python run_demo.py --image test.jpg --render_mode reconstruct --output_dir test_
 dir test_output
 ```
 
----
 
-## Step 3 — Set Up IDM-VTON (Virtual Try-On)
-
-### Mac
-
-```bash
-cd ~/Documents/IDM-VTON
-
-conda create -n idmvton python=3.10 -y
-conda activate idmvton
-
-pip install torch torchvision torchaudio
-pip install diffusers transformers accelerate
-pip install fastapi uvicorn python-multipart pillow
-pip install -r requirements.txt || true
-
-# Download model weights (~15 GB)
-python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(repo_id='yisol/IDM-VTON', local_dir='./ckpt/IDM-VTON')
-"
-```
-
-### Windows
-
-```powershell
-cd $env:USERPROFILE\Documents\IDM-VTON
-
-conda create -n idmvton python=3.10 -y
-conda activate idmvton
-
-# NVIDIA GPU (recommended):
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-pip install diffusers transformers accelerate
-pip install fastapi uvicorn python-multipart pillow
-pip install -r requirements.txt
-
-python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='yisol/IDM-VTON', local_dir='./ckpt/IDM-VTON')"
-```
-
-### Test IDM-VTON
-
-```bash
-cd ~/Documents/IDM-VTON   # Mac — adjust path for Windows
-conda activate idmvton
-python gradio_demo/app.py
-# Open http://localhost:7860 — upload person + garment → verify output
-# Ctrl+C to stop after testing
-```
 
 ---
 
@@ -490,14 +444,13 @@ chmod +x start_all.sh
 ./start_all.sh
 ```
 
-This opens **4 Terminal tabs** automatically:
+This opens **3 Terminal tabs** automatically:
 
 | Tab | Service | Port |
 |-----|---------|------|
 | 1 | IDOL Avatar Service | `:8001` |
-| 2 | IDM-VTON Try-On | `:8002` |
-| 3 | VEXA Python Backend | `:8000` |
-| 4 | Next.js Frontend | `:3000` |
+| 2 | VEXA Python Backend | `:8000` |
+| 3 | Next.js Frontend | `:3000` |
 
 ### Windows (run each in a separate PowerShell tab)
 
@@ -508,21 +461,14 @@ conda activate idol
 uvicorn vexa_idol_server:app --host 0.0.0.0 --port 8001
 ```
 
-**Tab 2 — IDM-VTON:**
-```powershell
-cd $env:USERPROFILE\Documents\IDM-VTON
-conda activate idmvton
-uvicorn vexa_tryon_server:app --host 0.0.0.0 --port 8002
-```
-
-**Tab 3 — VEXA Backend:**
+**Tab 2 — VEXA Backend:**
 ```powershell
 cd VEXA\backend
 .venv\Scripts\activate
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-**Tab 4 — Frontend:**
+**Tab 3 — Frontend:**
 ```powershell
 cd VEXA\frontend
 npm run dev
@@ -532,7 +478,6 @@ npm run dev
 
 ```bash
 curl http://localhost:8001/health   # IDOL
-curl http://localhost:8002/health   # IDM-VTON
 curl http://localhost:8000/health   # VEXA Backend
 # Then open http://localhost:3000
 ```
@@ -584,7 +529,6 @@ python -c "import torch; print(torch.backends.mps.is_available())"
 **Port already in use**
 ```bash
 lsof -ti:8001 | xargs kill -9   # kill IDOL
-lsof -ti:8002 | xargs kill -9   # kill IDM-VTON
 lsof -ti:8000 | xargs kill -9   # kill backend
 lsof -ti:3000 | xargs kill -9   # kill frontend
 ```
@@ -738,9 +682,8 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | `/health` | None | Health check (includes IDOL/VTON status) |
+| GET | `/health` | None | Health check (includes IDOL status) |
 | POST | `/generate-avatar` | Bearer | IDOL avatar → falls back to placeholder |
-| POST | `/tryon` | Bearer | Proxy to local IDM-VTON service |
 | POST | `/generate-avatar-full` | Bearer | Full SMPL-X pipeline (heavy) |
 
 ### IDOL Service (port 8001)
@@ -749,14 +692,6 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 |--------|----------|-------------|
 | POST | `/generate-avatar` | Start avatar generation job |
 | GET | `/avatar-status/{id}` | Poll job status |
-| GET | `/health` | Service health |
-
-### IDM-VTON Service (port 8002)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/tryon` | Start try-on job |
-| GET | `/tryon-status/{id}` | Poll job status |
 | GET | `/health` | Service health |
 
 ---
