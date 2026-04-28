@@ -29,16 +29,42 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // 1. Authentication Check (Bearer Token)
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized: Bearer token required' }, { status: 401 });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase configuration missing');
+    }
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized: Invalid token' }, { status: 401 });
+    }
+
     const supabase = getSupabase();
 
     const { data, error } = await supabase
       .from('video_jobs')
-      .select('status, progress_percent, result_video_url, error_message')
+      .select('user_id, status, progress_percent, result_video_url, error_message')
       .eq('id', jobId)
       .maybeSingle();
 
     if (error || !data) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+    }
+
+    if (data.user_id !== user.id) {
+      return NextResponse.json({ error: 'Forbidden: Cannot access video tryon for another user' }, { status: 403 });
     }
 
     const row = data as VideoJobStatusRow;

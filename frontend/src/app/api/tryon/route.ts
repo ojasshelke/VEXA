@@ -1,6 +1,6 @@
 /**
  * POST /api/tryon
- * Core try-on engine powered by LightX Virtual Try-On API.
+ * Core try-on engine powered by Fashn.ai API.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isRateLimited } from '@/lib/rateLimit';
 import { validateApiKey } from '@/lib/apiKeyMiddleware';
 import { getFitRecommendation, getFitScore } from '@/lib/fitEngine';
-import type { MarketplaceContext, LightXTryOnResponse, LightXStatusResponse } from '@/types';
+import type { MarketplaceContext, FashnRunResponse, FashnStatusResponse } from '@/types';
 import type { ClothingAssetRow, Database } from '@/types/database';
 import { uploadToR2 } from '@/lib/r2';
 
@@ -18,12 +18,12 @@ export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
-// ─── LightX API constants ─────────────────────────────────────────────────────
-const LIGHTX_TRYON_URL = 'https://api.lightxeditor.com/external/api/v2/aivirtualtryon';
-const LIGHTX_STATUS_URL = 'https://api.lightxeditor.com/external/api/v1/order-status';
-const LIGHTX_POLL_INTERVAL_MS = 3000;
-const LIGHTX_MAX_POLLS = 20;
-const LIGHTX_FETCH_TIMEOUT_MS = 30_000;
+// ─── Fashn API constants ────────────────────────────────────────────────────────
+const FASHN_TRYON_URL = 'https://api.fashn.ai/v1/run';
+const FASHN_STATUS_URL = 'https://api.fashn.ai/v1/status';
+const FASHN_POLL_INTERVAL_MS = 3000;
+const FASHN_MAX_POLLS = 20;
+const FASHN_FETCH_TIMEOUT_MS = 30_000;
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ async function resolveToPublicUrl(
 
     const r2Url = await uploadToR2(buffer, filename, mime);
     if (r2Url) {
-      console.log(`[LightX] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
+      console.log(`[Fashn] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
       return r2Url;
     }
 
@@ -171,7 +171,7 @@ async function resolveToPublicUrl(
     if (!error) {
       const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
       if (signed?.signedUrl) {
-        console.log(`[LightX] ${label} data URI uploaded to Supabase Storage`);
+        console.log(`[Fashn] ${label} data URI uploaded to Supabase Storage`);
         return signed.signedUrl;
       }
     }
@@ -185,84 +185,79 @@ async function resolveToPublicUrl(
   throw new Error(`${label}: unsupported URL scheme — expected http(s):// or data:`);
 }
 
-// ─── LightX API call + polling ────────────────────────────────────────────────
+// ─── Fashn API call + polling ────────────────────────────────────────────────
 
-async function callLightX(personImageUrl: string, garmentImageUrl: string): Promise<string> {
-  const apiKey = process.env.LIGHTX_API_KEY;
+async function callFashnTryon(personImageUrl: string, garmentImageUrl: string, category: string = 'tops'): Promise<string> {
+  const apiKey = process.env.FASHN_API_KEY;
   if (!apiKey) {
-    throw new Error('LIGHTX_API_KEY is not configured');
+    throw new Error('FASHN_API_KEY is not configured');
   }
 
   const headers = {
     'Content-Type': 'application/json',
-    'x-api-key': apiKey,
+    'Authorization': `Bearer ${apiKey}`,
   };
 
   // Step 1 — submit try-on job
-  console.log('[LightX] Submitting try-on job…');
-  const submitRes = await fetch(LIGHTX_TRYON_URL, {
+  console.log('[Fashn] Submitting try-on job…');
+  const submitRes = await fetch(FASHN_TRYON_URL, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ imageUrl: personImageUrl, styleImageUrl: garmentImageUrl }),
-    signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+    body: JSON.stringify({ model_image: personImageUrl, garment_image: garmentImageUrl, category }),
+    signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS),
   });
 
   if (!submitRes.ok) {
     const body = await submitRes.text().catch(() => '');
-    throw new Error(`[LightX] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
+    throw new Error(`[Fashn] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
   }
 
-  const submitRaw = (await submitRes.json()) as LightXTryOnResponse;
-  console.log('[LightX] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
+  const submitRaw = (await submitRes.json()) as FashnRunResponse;
+  console.log('[Fashn] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
 
-  // v2 API may wrap payload in a `body` field
-  const submitData = submitRaw.body ?? submitRaw;
-  const orderId = submitData.orderId;
+  const orderId = submitRaw.id;
   if (!orderId) {
-    throw new Error(`[LightX] Submit response missing orderId. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
+    throw new Error(`[Fashn] Submit response missing id. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
   }
-  console.log(`[LightX] Job created — orderId=${orderId}`);
+  console.log(`[Fashn] Job created — id=${orderId}`);
 
   // Step 2 — poll for completion
-  for (let poll = 1; poll <= LIGHTX_MAX_POLLS; poll++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, LIGHTX_POLL_INTERVAL_MS));
+  for (let poll = 1; poll <= FASHN_MAX_POLLS; poll++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, FASHN_POLL_INTERVAL_MS));
 
-    const statusRes = await fetch(LIGHTX_STATUS_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ orderId }),
-      signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+    const statusRes = await fetch(`${FASHN_STATUS_URL}/${orderId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS),
     });
 
     if (!statusRes.ok) {
       const errBody = await statusRes.text().catch(() => '');
-      throw new Error(`[LightX] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
+      throw new Error(`[Fashn] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
     }
 
-    const statusRaw = (await statusRes.json()) as LightXStatusResponse;
-    const statusData = statusRaw.body ?? statusRaw;
+    const statusRaw = (await statusRes.json()) as FashnStatusResponse;
+    const currentStatus = statusRaw.status ?? '';
+    const outputUrl = statusRaw.output?.[0];
 
-    // Accept both `imageStatus` (v2) and `status` (v1) field names
-    const currentStatus = statusData.imageStatus ?? statusData.status ?? '';
-    // Accept both `outputImageUrl` (v2) and `output` (v1) field names
-    const outputUrl = statusData.outputImageUrl ?? statusData.output;
+    console.log(`[Fashn] Poll ${poll}/${FASHN_MAX_POLLS}: status=${currentStatus}`);
 
-    console.log(`[LightX] Poll ${poll}/${LIGHTX_MAX_POLLS}: status=${currentStatus}`);
-
-    if (currentStatus === 'active') {
+    if (currentStatus === 'completed') {
       if (!outputUrl) {
-        throw new Error('[LightX] Status is active but output URL is missing');
+        throw new Error('[Fashn] Status is completed but output URL is missing');
       }
-      console.log(`[LightX] Try-on complete: ${outputUrl}`);
+      console.log(`[Fashn] Try-on complete: ${outputUrl}`);
       return outputUrl;
     }
 
     if (currentStatus === 'failed') {
-      throw new Error(`[LightX] Job failed (orderId=${orderId})`);
+      throw new Error(`[Fashn] Job failed (id=${orderId})`);
     }
   }
 
-  throw new Error(`[LightX] Timed out after ${LIGHTX_MAX_POLLS} polls (${(LIGHTX_MAX_POLLS * LIGHTX_POLL_INTERVAL_MS) / 1000}s)`);
+  throw new Error(`[Fashn] Timed out after ${FASHN_MAX_POLLS} polls (${(FASHN_MAX_POLLS * FASHN_POLL_INTERVAL_MS) / 1000}s)`);
 }
 
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
@@ -313,7 +308,7 @@ export async function handleTryOn(
       if (signedData?.signedUrl) finalUrl = signedData.signedUrl;
     }
     const fitLabel = cached.fit_label ?? 'True to size';
-    console.log('[LightX] Cache hit for', userId, productId);
+    console.log('[Fashn] Cache hit for', userId, productId);
     return {
       resultUrl: finalUrl,
       storagePath: cached.result_url,
@@ -334,15 +329,21 @@ export async function handleTryOn(
     resolveToPublicUrl(productImageUrl, 'productImageUrl', userId, supabase),
   ]);
 
-  // 3. Call LightX Virtual Try-On API
-  const lightxResultUrl = await callLightX(resolvedPersonUrl, resolvedGarmentUrl);
+  // 3. Get category and Call Fashn Try-On API
+  const { data: clothingRows } = await supabase
+    .from('clothing_assets')
+    .select('category')
+    .eq('product_id', productId)
+    .limit(1);
+  const category = (clothingRows as any)?.[0]?.category || 'tops';
+  const fashnResultUrl = await callFashnTryon(resolvedPersonUrl, resolvedGarmentUrl, category);
 
-  // 4. Mirror result to R2 for persistence (LightX URLs may expire)
-  let resultUrl = lightxResultUrl;
-  let storagePath = lightxResultUrl;
+  // 4. Mirror result to R2 for persistence (Fashn URLs may expire)
+  let resultUrl = fashnResultUrl;
+  let storagePath = fashnResultUrl;
 
   try {
-    const imageRes = await fetch(lightxResultUrl, { signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS) });
+    const imageRes = await fetch(fashnResultUrl, { signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS) });
     if (imageRes.ok) {
       const arrayBuf = await imageRes.arrayBuffer();
       const imageBuffer = Buffer.from(arrayBuf);
@@ -353,11 +354,11 @@ export async function handleTryOn(
       if (r2Url) {
         resultUrl = r2Url;
         storagePath = r2Url;
-        console.log('[LightX] Result mirrored to R2:', r2Url.slice(0, 80));
+        console.log('[Fashn] Result mirrored to R2:', r2Url.slice(0, 80));
       }
     }
   } catch (mirrorErr) {
-    console.warn('[LightX] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
+    console.warn('[Fashn] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
   }
 
   // 5. Fit metadata
@@ -376,7 +377,7 @@ export async function handleTryOn(
   }
 
   // 6. Cache result
-  console.log(`[LightX] Caching result for user: ${userId}`);
+  console.log(`[Fashn] Caching result for user: ${userId}`);
   const { error: upsertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).upsert(
     {
       user_id: userId,
@@ -392,7 +393,7 @@ export async function handleTryOn(
   );
 
   if (upsertError) {
-    console.warn('[LightX] Failed to cache result:', upsertError.message);
+    console.warn('[Fashn] Failed to cache result:', upsertError.message);
   }
 
   return {
@@ -459,7 +460,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error('[LightX] Error:', error.message);
+    console.error('[Fashn] Error:', error.message);
 
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

@@ -193,55 +193,15 @@ export interface VideoJobStatusResponse {
   errorMessage: string | null;
 }
 
-// ─── LightX Virtual Try-On ───────────────────────────────────────────────────
+// ─── Fashn.ai Virtual Try-On ───────────────────────────────────────────────────
 
-export interface LightXTryOnRequest {
-  /** Public URL of the person photo */
-  imageUrl: string;
-  /** Public URL of the garment/style image */
-  styleImageUrl: string;
+export interface FashnRunResponse {
+  id: string;
 }
 
-export interface LightXTryOnResponseBody {
-  orderId: string;
-  /** "init" on creation */
-  imageStatus?: string;
-  status?: string;
-}
-
-export interface LightXTryOnResponse {
-  /** Some versions return fields at the top level */
-  orderId?: string;
-  imageStatus?: string;
-  status?: string;
-  /** v2 API wraps the payload here */
-  body?: LightXTryOnResponseBody;
-}
-
-export interface LightXStatusRequest {
-  orderId: string;
-}
-
-export interface LightXStatusResponseBody {
-  /** "init" | "active" | "failed" */
-  imageStatus?: string;
-  status?: string;
-  /** Output image URL when imageStatus/status === "active" */
-  outputImageUrl?: string;
-  output?: string;
-}
-
-export interface LightXStatusResponse {
-  /** Present in flat responses */
-  imageStatus?: string;
-  status?: string;
-  outputImageUrl?: string;
-  output?: string;
-  /** v2 API wraps payload here */
-  body?: LightXStatusResponseBody;
-}
-
-export interface LightXOutputData {
-  orderId: string;
-  outputUrl: string;
+export interface FashnStatusResponse {
+  id: string;
+  status: string; // 'starting', 'processing', 'completed', 'failed'
+  output?: string[];
+  error?: string;
 }

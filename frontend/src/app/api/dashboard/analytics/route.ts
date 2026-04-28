@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { hashApiKey } from '@/lib/crypto';
 
 export async function GET(req: NextRequest) {
   try {
@@ -34,7 +35,8 @@ export async function GET(req: NextRequest) {
 
     if (marketplaceKey) {
       // Need to find api_key_id first
-      const { data: keyRecord } = await supabase.from('api_keys').select('id').eq('key', marketplaceKey).single();
+      const hashedKey = await hashApiKey(marketplaceKey);
+      const { data: keyRecord } = await supabase.from('api_keys').select('id').eq('key_hash', hashedKey).single();
       if (keyRecord) {
         usageQuery = usageQuery.eq('api_key_id', keyRecord.id);
         // Note: For try_on if we had marketplace_id we'd filter, but skipping for now or assume filtering.
@@ -55,7 +57,7 @@ export async function GET(req: NextRequest) {
     const successRate = totalLogs > 0 ? Math.round((successLogs / totalLogs) * 100) : 100;
 
     // 2. Average Response Time
-    const responseTimes = usageLogs.map(log => log.response_time_ms || Math.floor(Math.random() * 500) + 100);
+    const responseTimes = usageLogs.map(log => log.response_time_ms || 0);
     const avgResponseTime = responseTimes.length > 0
       ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
       : 0;
