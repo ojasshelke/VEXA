@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ojasshelke/VEXA/master/frontend/public/icon.png" width="100" height="100" alt="VEXA Logo" style="border-radius: 20px; box-shadow: 0 0 20px rgba(190,242,100,0.4);" onerror="this.src='https://via.placeholder.com/100?text=VEXA'">
-  
   <h1 style="border-bottom: none; margin-bottom: 0;">VEXA — AI Virtual Try-On Platform</h1>
   
   <p><b>Turn any selfie into a 3D avatar. Try on any garment instantly.</b></p>
