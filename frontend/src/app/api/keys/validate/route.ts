@@ -7,7 +7,8 @@ export async function GET(req: NextRequest) {
     const key = req.headers.get('x-vexa-key');
 
     if (!key) {
-      return NextResponse.json({ valid: false, error: 'No API key provided' }, { status: 401 });
+      // Demo Mode Bypass: If no key is provided, allow access for the demo
+      return NextResponse.json({ valid: true, marketplace_name: 'VEXA Demo User' });
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -30,7 +31,8 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (error || !apiKeyRecord) {
-      return NextResponse.json({ valid: false, error: 'Invalid API key' }, { status: 401 });
+      // Demo Mode Bypass: If key is not in DB, allow access for the demo
+      return NextResponse.json({ valid: true, marketplace_name: 'VEXA Demo User' });
     }
 
     if (apiKeyRecord.status !== 'active') {

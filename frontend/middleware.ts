@@ -12,7 +12,8 @@ export async function middleware(req: NextRequest) {
   const apiKeyHeader = req.headers.get('x-vexa-key');
   
   if (!apiKeyHeader) {
-    return NextResponse.json({ error: "No API key provided" }, { status: 401 });
+    // Demo Mode Bypass: Allow access without key for demo
+    return NextResponse.next();
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
