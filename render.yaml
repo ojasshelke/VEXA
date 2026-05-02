@@ -9,6 +9,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: PYTHON_BIN
+        value: python3.11
       - key: INTERNAL_SERVICE_TOKEN
         sync: false
       - key: NEXT_PUBLIC_APP_URL
