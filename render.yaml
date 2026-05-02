@@ -17,7 +17,8 @@ services:
   - type: web
     name: vexa-frontend
     env: node
-    buildCommand: "cd frontend && npm install && npm run build"
+    plan: free
+    buildCommand: "cd frontend && npm install --legacy-peer-deps && npm run build"
     startCommand: "cd frontend && npm run start"
     envVars:
       - key: NODE_VERSION
@@ -42,3 +43,6 @@ services:
         sync: false
       - key: TRYON_PROVIDER
         value: "lightx"
+      - key: INTERNAL_SERVICE_TOKEN
+        sync: false
+
