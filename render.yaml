@@ -1,22 +1,22 @@
 services:
   # ─── VEXA Backend (FastAPI) ──────────────────────────────────────
   - type: web
-    name: vexa-backend
+    name: vexa-api-service
     env: python
     plan: free
     buildCommand: "pip install -r backend/requirements.txt"
     startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.0
+        value: 3.11.9
       - key: INTERNAL_SERVICE_TOKEN
-        sync: false # Set this in the Render Dashboard
+        sync: false
       - key: NEXT_PUBLIC_APP_URL
-        sync: false # Point this to your frontend URL
+        sync: false
 
   # ─── VEXA Frontend (Next.js) ─────────────────────────────────────
   - type: web
-    name: vexa-frontend
+    name: vexa-main-frontend
     env: node
     plan: free
     buildCommand: "cd frontend && npm install --legacy-peer-deps && npm run build"
@@ -32,12 +32,12 @@ services:
         sync: false
       - key: AVATAR_SERVICE_URL
         fromService:
-          name: vexa-backend
+          name: vexa-api-service
           type: web
           property: host
       - key: PYTHON_SERVICE_URL
         fromService:
-          name: vexa-backend
+          name: vexa-api-service
           type: web
           property: host
       - key: LIGHTX_API_KEY
@@ -46,4 +46,5 @@ services:
         value: "lightx"
       - key: INTERNAL_SERVICE_TOKEN
         sync: false
+
 
