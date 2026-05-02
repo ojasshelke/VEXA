@@ -1,6 +1,6 @@
 /**
  * POST /api/tryon
- * Core try-on engine powered by Fashn.ai API.
+ * Core try-on engine — supports Fashn.ai and LightX (toggled via TRYON_PROVIDER env).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -18,12 +18,28 @@ export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
+// ─── Provider toggle ────────────────────────────────────────────────────────
+type TryOnProvider = 'fashn' | 'lightx';
+function getProvider(): TryOnProvider {
+  const explicit = process.env.TRYON_PROVIDER?.toLowerCase();
+  if (explicit === 'fashn' || explicit === 'lightx') return explicit;
+  // Auto-detect: prefer LightX when Fashn key is absent
+  return process.env.FASHN_API_KEY ? 'fashn' : 'lightx';
+}
+
 // ─── Fashn API constants ────────────────────────────────────────────────────────
 const FASHN_TRYON_URL = 'https://api.fashn.ai/v1/run';
 const FASHN_STATUS_URL = 'https://api.fashn.ai/v1/status';
 const FASHN_POLL_INTERVAL_MS = 3000;
 const FASHN_MAX_POLLS = 20;
 const FASHN_FETCH_TIMEOUT_MS = 30_000;
+
+// ─── LightX API constants ───────────────────────────────────────────────────────
+const LIGHTX_TRYON_URL = 'https://api.lightxeditor.com/external/api/v2/aivirtualtryon';
+const LIGHTX_STATUS_URL = 'https://api.lightxeditor.com/external/api/v2/order-status';
+const LIGHTX_POLL_INTERVAL_MS = 3000;
+const LIGHTX_MAX_POLLS = 40;
+const LIGHTX_FETCH_TIMEOUT_MS = 30_000;
 
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
@@ -49,11 +65,13 @@ function validateSecureUrl(url: string, description: string): string {
     ALLOWED_STORAGE_ORIGIN,
     'https://images.unsplash.com',
     'https://cdn.shopify.com',
+    'https://api.lightxeditor.com',
   ];
   const isAllowed =
     allowedOrigins.some((o) => parsed.origin === o) ||
     parsed.origin.endsWith('.supabase.co') ||
     parsed.origin.endsWith('.r2.dev') ||
+    parsed.origin.endsWith('.lightxeditor.com') ||
     (process.env.R2_PUBLIC_URL ? parsed.origin === new URL(process.env.R2_PUBLIC_URL).origin : false);
 
   if (!isAllowed) {
@@ -163,7 +181,7 @@ async function resolveToPublicUrl(
 
     const r2Url = await uploadToR2(buffer, filename, mime);
     if (r2Url) {
-      console.log(`[Fashn] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
+      console.log(`[TryOn] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
       return r2Url;
     }
 
@@ -171,7 +189,7 @@ async function resolveToPublicUrl(
     if (!error) {
       const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
       if (signed?.signedUrl) {
-        console.log(`[Fashn] ${label} data URI uploaded to Supabase Storage`);
+        console.log(`[TryOn] ${label} data URI uploaded to Supabase Storage`);
         return signed.signedUrl;
       }
     }
@@ -260,6 +278,108 @@ async function callFashnTryon(personImageUrl: string, garmentImageUrl: string, c
   throw new Error(`[Fashn] Timed out after ${FASHN_MAX_POLLS} polls (${(FASHN_MAX_POLLS * FASHN_POLL_INTERVAL_MS) / 1000}s)`);
 }
 
+// ─── LightX API call + polling ──────────────────────────────────────────────
+
+async function callLightxTryon(personImageUrl: string, garmentImageUrl: string, _category: string = 'tops'): Promise<string> {
+  const apiKey = process.env.LIGHTX_API_KEY;
+  if (!apiKey) {
+    throw new Error('LIGHTX_API_KEY is not configured');
+  }
+
+  // Step 1 — submit virtual try-on job
+  console.log('[LightX] Submitting virtual try-on job…');
+  const submitRes = await fetch(LIGHTX_TRYON_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      imageUrl: personImageUrl,
+      styleImageUrl: garmentImageUrl,
+    }),
+    signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+  });
+
+  if (!submitRes.ok) {
+    const body = await submitRes.text().catch(() => '');
+    throw new Error(`[LightX] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
+  }
+
+  const submitRaw = await submitRes.json();
+  console.log('[LightX] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
+
+  // LightX may nest response under `body` or return flat
+  const responseBody = submitRaw.body ?? submitRaw;
+  const orderId = responseBody.orderId;
+  if (!orderId) {
+    throw new Error(`[LightX] Submit response missing orderId. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
+  }
+  console.log(`[LightX] Job created — orderId=${orderId}`);
+
+  // If the response already contains a completed output, return it immediately
+  if (responseBody.output && (responseBody.status === 'active' || responseBody.status === 'completed')) {
+    console.log(`[LightX] Immediate result: ${responseBody.output}`);
+    return responseBody.output;
+  }
+
+  // Step 2 — poll for completion
+  for (let poll = 1; poll <= LIGHTX_MAX_POLLS; poll++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, LIGHTX_POLL_INTERVAL_MS));
+
+    console.log(`[LightX] Polling status (${poll}/${LIGHTX_MAX_POLLS})…`);
+    const statusRes = await fetch(LIGHTX_STATUS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({ orderId }),
+      signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+    });
+
+    if (!statusRes.ok) {
+      const errBody = await statusRes.text().catch(() => '');
+      throw new Error(`[LightX] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
+    }
+
+    const statusRaw = await statusRes.json();
+    const statusBody = statusRaw.body ?? statusRaw;
+    const currentStatus = statusBody.status ?? '';
+
+    console.log(`[LightX] Poll ${poll}/${LIGHTX_MAX_POLLS}: status=${currentStatus}`);
+
+    if (currentStatus === 'active' || currentStatus === 'completed') {
+      const outputUrl = statusBody.output;
+      if (!outputUrl) {
+        throw new Error('[LightX] Status is completed but output URL is missing');
+      }
+      console.log(`[LightX] Try-on complete: ${outputUrl}`);
+      return outputUrl;
+    }
+
+    if (currentStatus === 'failed') {
+      throw new Error(`[LightX] Job failed (orderId=${orderId}): ${statusBody.error || 'Unknown error'}`);
+    }
+
+    // Still processing (status='init' or 'pending') — continue polling
+  }
+
+  throw new Error(`[LightX] Timed out after ${LIGHTX_MAX_POLLS} polls (${(LIGHTX_MAX_POLLS * LIGHTX_POLL_INTERVAL_MS) / 1000}s)`);
+}
+
+// ─── Provider dispatcher ────────────────────────────────────────────────────
+
+async function callTryOnEngine(personImageUrl: string, garmentImageUrl: string, category: string = 'tops'): Promise<string> {
+  const provider = getProvider();
+  console.log(`[TryOn] Using provider: ${provider}`);
+
+  if (provider === 'lightx') {
+    return callLightxTryon(personImageUrl, garmentImageUrl, category);
+  }
+  return callFashnTryon(personImageUrl, garmentImageUrl, category);
+}
+
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
 
 interface HandleTryOnInput {
@@ -308,7 +428,7 @@ export async function handleTryOn(
       if (signedData?.signedUrl) finalUrl = signedData.signedUrl;
     }
     const fitLabel = cached.fit_label ?? 'True to size';
-    console.log('[Fashn] Cache hit for', userId, productId);
+    console.log('[TryOn] Cache hit for', userId, productId);
     return {
       resultUrl: finalUrl,
       storagePath: cached.result_url,
@@ -329,21 +449,21 @@ export async function handleTryOn(
     resolveToPublicUrl(productImageUrl, 'productImageUrl', userId, supabase),
   ]);
 
-  // 3. Get category and Call Fashn Try-On API
+  // 3. Get category and call try-on engine (Fashn or LightX based on TRYON_PROVIDER)
   const { data: clothingRows } = await supabase
     .from('clothing_assets')
     .select('category')
     .eq('product_id', productId)
     .limit(1);
   const category = (clothingRows as any)?.[0]?.category || 'tops';
-  const fashnResultUrl = await callFashnTryon(resolvedPersonUrl, resolvedGarmentUrl, category);
+  const engineResultUrl = await callTryOnEngine(resolvedPersonUrl, resolvedGarmentUrl, category);
 
-  // 4. Mirror result to R2 for persistence (Fashn URLs may expire)
-  let resultUrl = fashnResultUrl;
-  let storagePath = fashnResultUrl;
+  // 4. Mirror result to R2 for persistence (AI provider URLs may expire)
+  let resultUrl = engineResultUrl;
+  let storagePath = engineResultUrl;
 
   try {
-    const imageRes = await fetch(fashnResultUrl, { signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS) });
+    const imageRes = await fetch(engineResultUrl, { signal: AbortSignal.timeout(30_000) });
     if (imageRes.ok) {
       const arrayBuf = await imageRes.arrayBuffer();
       const imageBuffer = Buffer.from(arrayBuf);
@@ -354,11 +474,11 @@ export async function handleTryOn(
       if (r2Url) {
         resultUrl = r2Url;
         storagePath = r2Url;
-        console.log('[Fashn] Result mirrored to R2:', r2Url.slice(0, 80));
+        console.log('[TryOn] Result mirrored to R2:', r2Url.slice(0, 80));
       }
     }
   } catch (mirrorErr) {
-    console.warn('[Fashn] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
+    console.warn('[TryOn] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
   }
 
   // 5. Fit metadata
@@ -377,7 +497,7 @@ export async function handleTryOn(
   }
 
   // 6. Cache result
-  console.log(`[Fashn] Caching result for user: ${userId}`);
+  console.log(`[TryOn] Caching result for user: ${userId}`);
   const { error: upsertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).upsert(
     {
       user_id: userId,
@@ -393,7 +513,7 @@ export async function handleTryOn(
   );
 
   if (upsertError) {
-    console.warn('[Fashn] Failed to cache result:', upsertError.message);
+    console.warn('[TryOn] Failed to cache result:', upsertError.message);
   }
 
   return {
@@ -460,7 +580,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error('[Fashn] Error:', error.message);
+    console.error('[TryOn] Error:', error.message);
 
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
