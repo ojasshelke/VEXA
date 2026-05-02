@@ -142,21 +142,20 @@ async function authenticateRequest(req: NextRequest, bodyUserId: string): Promis
     return { userId: user.id, marketplace: null };
   }
 
-  if (process.env.NODE_ENV !== 'production') {
-    const guestId = bodyUserId || 'demo_user_001';
-    const supabase = getServiceSupabase();
-    await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
-    console.warn('[/api/tryon] Dev guest mode — bypassing auth for userId=%s', guestId);
-    return {
-      userId: guestId,
-      marketplace: {
-        marketplaceId: 'mkt_dev',
-        name: 'Local Dev Guest',
-        apiKey: 'dev-guest',
-        createdAt: new Date().toISOString(),
-      },
-    };
-  }
+  // Demo Mode Bypass: Allow guest mode in production for this demo
+  const guestId = bodyUserId || 'demo_user_001';
+  const supabase = getServiceSupabase();
+  await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
+  console.warn('[/api/tryon] Demo mode — bypassing auth for userId=%s', guestId);
+  return {
+    userId: guestId,
+    marketplace: {
+      marketplaceId: 'mkt_dev',
+      name: 'VEXA Demo Guest',
+      apiKey: 'demo-guest',
+      createdAt: new Date().toISOString(),
+    },
+  };
 
   return NextResponse.json({ error: 'Unauthorized: Valid Bearer token or API key required' }, { status: 401 });
 }
