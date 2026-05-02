@@ -205,3 +205,24 @@ export interface FashnStatusResponse {
   output?: string[];
   error?: string;
 }
+
+// ─── LightX Virtual Try-On ────────────────────────────────────────────────────
+
+export interface LightXTryOnResponse {
+  statusCode: number;
+  body: {
+    orderId: string;
+    status: string; // 'init', 'active', 'failed'
+    output?: string; // result image URL when completed
+  };
+}
+
+export interface LightXStatusResponse {
+  statusCode: number;
+  body: {
+    orderId: string;
+    status: string; // 'active', 'failed', 'completed'
+    output?: string; // result image URL
+    error?: string;
+  };
+}
