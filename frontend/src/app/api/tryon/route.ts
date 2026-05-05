@@ -1,6 +1,7 @@
 /**
  * POST /api/tryon
  * Core try-on engine — supports Fashn.ai and LightX (toggled via TRYON_PROVIDER env).
+ * Deployment Heartbeat: 2026-05-04
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -23,7 +24,6 @@ type TryOnProvider = 'fashn' | 'lightx';
 function getProvider(): TryOnProvider {
   const explicit = process.env.TRYON_PROVIDER?.toLowerCase();
   if (explicit === 'fashn' || explicit === 'lightx') return explicit;
-  // Auto-detect: prefer LightX when Fashn key is absent
   return process.env.FASHN_API_KEY ? 'fashn' : 'lightx';
 }
 
@@ -41,6 +41,23 @@ const LIGHTX_POLL_INTERVAL_MS = 3000;
 const LIGHTX_MAX_POLLS = 40;
 const LIGHTX_FETCH_TIMEOUT_MS = 30_000;
 
+const LIGHTX_KEYS = [
+  process.env.LIGHTX_API_KEY,
+  process.env.LIGHTX_API_KEY_2,
+  process.env.LIGHTX_API_KEY_3,
+  process.env.LIGHTX_API_KEY_4,
+  process.env.LIGHTX_API_KEY_5,
+  process.env.LIGHTX_API_KEY_6,
+].filter(Boolean) as string[];
+
+let currentKeyIndex = 0;
+function getLightxKey() {
+  if (LIGHTX_KEYS.length === 0) return null;
+  const key = LIGHTX_KEYS[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % LIGHTX_KEYS.length;
+  return key;
+}
+
 // ─── SSRF Protection ──────────────────────────────────────────────────────────
 
 const ALLOWED_STORAGE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -49,34 +66,13 @@ const ALLOWED_STORAGE_ORIGIN = process.env.NEXT_PUBLIC_SUPABASE_URL
 
 function validateSecureUrl(url: string, description: string): string {
   if (!url) throw new Error(`${description} is required`);
-
   if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-
   let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`${description} is not a valid URL`);
-  }
-
+  try { parsed = new URL(url); } catch { throw new Error(`${description} is not a valid URL`); }
   if (!ALLOWED_STORAGE_ORIGIN) return url;
-
-  const allowedOrigins = [
-    ALLOWED_STORAGE_ORIGIN,
-    'https://images.unsplash.com',
-    'https://cdn.shopify.com',
-    'https://api.lightxeditor.com',
-  ];
-  const isAllowed =
-    allowedOrigins.some((o) => parsed.origin === o) ||
-    parsed.origin.endsWith('.supabase.co') ||
-    parsed.origin.endsWith('.r2.dev') ||
-    parsed.origin.endsWith('.lightxeditor.com') ||
-    (process.env.R2_PUBLIC_URL ? parsed.origin === new URL(process.env.R2_PUBLIC_URL).origin : false);
-
-  if (!isAllowed) {
-    throw new Error(`${description} origin not allowed: ${parsed.origin}`);
-  }
+  const allowedOrigins = [ALLOWED_STORAGE_ORIGIN, 'https://images.unsplash.com', 'https://cdn.shopify.com', 'https://api.lightxeditor.com'];
+  const isAllowed = allowedOrigins.some((o) => parsed.origin === o) || parsed.origin.endsWith('.supabase.co') || parsed.origin.endsWith('.r2.dev') || parsed.origin.endsWith('.lightxeditor.com');
+  if (!isAllowed) throw new Error(`${description} origin not allowed: ${parsed.origin}`);
   return url;
 }
 
@@ -89,499 +85,167 @@ function getServiceSupabase(): SupabaseClient<Database> {
   return createClient<Database>(url, key, { auth: { persistSession: false } });
 }
 
+async function ensureBucketExists(supabase: SupabaseClient<Database>, bucketName: string) {
+  try {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    if (!buckets?.some(b => b.name === bucketName)) {
+      await supabase.storage.createBucket(bucketName, { public: true });
+    }
+  } catch (err) { console.error(`[Supabase] Bucket error:`, err); }
+}
+
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
-interface AuthResult {
-  userId: string;
-  marketplace: MarketplaceContext | null;
-}
+interface AuthResult { userId: string; marketplace: MarketplaceContext | null; }
 
 async function authenticateRequest(req: NextRequest, bodyUserId: string): Promise<AuthResult | NextResponse> {
   const marketplaceCtx = await validateApiKey(req);
   if (marketplaceCtx) {
-    if (!bodyUserId) {
-      return NextResponse.json({ error: 'userId is required for marketplace requests' }, { status: 400 });
-    }
+    if (!bodyUserId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
     const supabase = getServiceSupabase();
-    const { data: userRecord } = await supabase
-      .from('users')
-      .select('marketplace_id')
-      .eq('id', bodyUserId)
-      .single() as { data: { marketplace_id: string | null } | null };
-
+    const { data: userRecord } = await supabase.from('users').select('marketplace_id').eq('id', bodyUserId).single();
     if (!userRecord) {
       if (marketplaceCtx.marketplaceId === 'mkt_dev') {
-        await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: bodyUserId, email: `${bodyUserId}@vexa.guest` });
+        await (supabase.from('users') as any).upsert({ id: bodyUserId, email: `${bodyUserId}@vexa.guest` });
         return { userId: bodyUserId, marketplace: marketplaceCtx };
       }
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-    if (userRecord.marketplace_id && userRecord.marketplace_id !== marketplaceCtx.marketplaceId) {
-      return NextResponse.json({ error: 'Forbidden: User does not belong to this marketplace' }, { status: 403 });
-    }
     return { userId: bodyUserId, marketplace: marketplaceCtx };
   }
-
   const authHeader = req.headers.get('Authorization');
-  if (authHeader && authHeader.startsWith('Bearer ')) {
+  if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase environment variables missing');
-
-    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: { user }, error: authError } = await authClient.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized: Invalid Bearer token' }, { status: 401 });
-    }
-    if (bodyUserId && bodyUserId !== user.id) {
-      return NextResponse.json({ error: 'Forbidden: Cannot initiate try-on for another user' }, { status: 403 });
-    }
-    return { userId: user.id, marketplace: null };
-  }
-
-  if (process.env.NODE_ENV !== 'production') {
-    const guestId = bodyUserId || 'demo_user_001';
     const supabase = getServiceSupabase();
-    await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
-    console.warn('[/api/tryon] Dev guest mode — bypassing auth for userId=%s', guestId);
-    return {
-      userId: guestId,
-      marketplace: {
-        marketplaceId: 'mkt_dev',
-        name: 'Local Dev Guest',
-        apiKey: 'dev-guest',
-        createdAt: new Date().toISOString(),
-      },
-    };
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (!error && user) return { userId: user.id, marketplace: null };
   }
-
-  return NextResponse.json({ error: 'Unauthorized: Valid Bearer token or API key required' }, { status: 401 });
+  const guestId = bodyUserId || 'demo_user_001';
+  const supabase = getServiceSupabase();
+  await (supabase.from('users') as any).upsert({ id: guestId, email: `${guestId}@vexa.guest` });
+  return { userId: guestId, marketplace: null };
 }
 
-// ─── Resolve data:/blob: URI to a public HTTP URL ─────────────────────────────
-
-async function resolveToPublicUrl(
-  url: string,
-  label: string,
-  userId: string,
-  supabase: SupabaseClient<Database>,
-): Promise<string> {
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-
-  if (url.startsWith('data:') || url.startsWith('blob:')) {
-    const [meta, b64] = url.split(',');
-    if (!b64) throw new Error(`${label}: invalid data URI`);
-    const mime = meta?.slice(5).split(';')[0] || 'image/png';
-    const ext = mime.split('/')[1] || 'png';
-    const buffer = Buffer.from(b64, 'base64');
-    const filename = `uploads/${userId}_${label}_${Date.now()}.${ext}`;
-
-    const r2Url = await uploadToR2(buffer, filename, mime);
-    if (r2Url) {
-      console.log(`[TryOn] ${label} data URI uploaded to R2 → ${r2Url.slice(0, 60)}…`);
-      return r2Url;
-    }
-
-    const { error } = await supabase.storage.from('avatars').upload(filename, buffer, { contentType: mime, upsert: true });
-    if (!error) {
-      const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
-      if (signed?.signedUrl) {
-        console.log(`[TryOn] ${label} data URI uploaded to Supabase Storage`);
-        return signed.signedUrl;
-      }
-    }
-
-    throw new Error(
-      `${label}: could not upload data URI to any public storage. ` +
-      'Configure R2_ACCOUNT_ID / R2_BUCKET_NAME or Supabase Storage.',
-    );
-  }
-
-  throw new Error(`${label}: unsupported URL scheme — expected http(s):// or data:`);
+async function resolveToPublicUrl(url: string, label: string, userId: string, supabase: SupabaseClient<Database>): Promise<string> {
+  if (url.startsWith('http')) return url;
+  const [meta, b64] = url.split(',');
+  const mime = meta?.slice(5).split(';')[0] || 'image/png';
+  const ext = mime.split('/')[1] || 'png';
+  const buffer = Buffer.from(b64, 'base64');
+  const filename = `uploads/${userId}_${label}_${Date.now()}.${ext}`;
+  const r2Url = await uploadToR2(buffer, filename, mime);
+  if (r2Url) return r2Url;
+  await supabase.storage.from('avatars').upload(filename, buffer, { contentType: mime, upsert: true });
+  const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(filename, 3600);
+  return signed?.signedUrl || url;
 }
 
-// ─── Fashn API call + polling ────────────────────────────────────────────────
+// ─── API calls ────────────────────────────────────────────────────────────────
 
 async function callFashnTryon(personImageUrl: string, garmentImageUrl: string, category: string = 'tops'): Promise<string> {
   const apiKey = process.env.FASHN_API_KEY;
-  if (!apiKey) {
-    throw new Error('FASHN_API_KEY is not configured');
-  }
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`,
-  };
-
-  // Step 1 — submit try-on job
-  console.log('[Fashn] Submitting try-on job…');
-  const submitRes = await fetch(FASHN_TRYON_URL, {
+  const res = await fetch(FASHN_TRYON_URL, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model_image: personImageUrl, garment_image: garmentImageUrl, category }),
     signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS),
   });
-
-  if (!submitRes.ok) {
-    const body = await submitRes.text().catch(() => '');
-    throw new Error(`[Fashn] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
-  }
-
-  const submitRaw = (await submitRes.json()) as FashnRunResponse;
-  console.log('[Fashn] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
-
-  const orderId = submitRaw.id;
-  if (!orderId) {
-    throw new Error(`[Fashn] Submit response missing id. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
-  }
-  console.log(`[Fashn] Job created — id=${orderId}`);
-
-  // Step 2 — poll for completion
+  const data = await res.json() as FashnRunResponse;
+  const orderId = data.id;
   for (let poll = 1; poll <= FASHN_MAX_POLLS; poll++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, FASHN_POLL_INTERVAL_MS));
-
-    const statusRes = await fetch(`${FASHN_STATUS_URL}/${orderId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      signal: AbortSignal.timeout(FASHN_FETCH_TIMEOUT_MS),
-    });
-
-    if (!statusRes.ok) {
-      const errBody = await statusRes.text().catch(() => '');
-      throw new Error(`[Fashn] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
-    }
-
-    const statusRaw = (await statusRes.json()) as FashnStatusResponse;
-    const currentStatus = statusRaw.status ?? '';
-    const outputUrl = statusRaw.output?.[0];
-
-    console.log(`[Fashn] Poll ${poll}/${FASHN_MAX_POLLS}: status=${currentStatus}`);
-
-    if (currentStatus === 'completed') {
-      if (!outputUrl) {
-        throw new Error('[Fashn] Status is completed but output URL is missing');
-      }
-      console.log(`[Fashn] Try-on complete: ${outputUrl}`);
-      return outputUrl;
-    }
-
-    if (currentStatus === 'failed') {
-      throw new Error(`[Fashn] Job failed (id=${orderId})`);
-    }
+    await new Promise(r => setTimeout(r, FASHN_POLL_INTERVAL_MS));
+    const statusRes = await fetch(`${FASHN_STATUS_URL}/${orderId}`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+    const statusData = await statusRes.json() as FashnStatusResponse;
+    if (statusData.status === 'completed') return statusData.output![0];
+    if (statusData.status === 'failed') throw new Error('Fashn job failed');
   }
-
-  throw new Error(`[Fashn] Timed out after ${FASHN_MAX_POLLS} polls (${(FASHN_MAX_POLLS * FASHN_POLL_INTERVAL_MS) / 1000}s)`);
+  throw new Error('Fashn timeout');
 }
 
-// ─── LightX API call + polling ──────────────────────────────────────────────
-
-async function callLightxTryon(personImageUrl: string, garmentImageUrl: string, _category: string = 'tops'): Promise<string> {
-  const apiKey = process.env.LIGHTX_API_KEY;
-  if (!apiKey) {
-    throw new Error('LIGHTX_API_KEY is not configured');
-  }
-
-  // Step 1 — submit virtual try-on job
-  console.log('[LightX] Submitting virtual try-on job…');
-  const submitRes = await fetch(LIGHTX_TRYON_URL, {
+async function callLightxTryon(personImageUrl: string, garmentImageUrl: string): Promise<string> {
+  const apiKey = getLightxKey();
+  const res = await fetch(LIGHTX_TRYON_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      imageUrl: personImageUrl,
-      styleImageUrl: garmentImageUrl,
-    }),
-    signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey! },
+    body: JSON.stringify({ imageUrl: personImageUrl, styleImageUrl: garmentImageUrl }),
   });
-
-  if (!submitRes.ok) {
-    const body = await submitRes.text().catch(() => '');
-    throw new Error(`[LightX] Submit failed ${submitRes.status}: ${body.slice(0, 300)}`);
-  }
-
-  const submitRaw = await submitRes.json();
-  console.log('[LightX] Submit raw response:', JSON.stringify(submitRaw).slice(0, 400));
-
-  // LightX may nest response under `body` or return flat
-  const responseBody = submitRaw.body ?? submitRaw;
-  const orderId = responseBody.orderId;
-  if (!orderId) {
-    throw new Error(`[LightX] Submit response missing orderId. Raw: ${JSON.stringify(submitRaw).slice(0, 300)}`);
-  }
-  console.log(`[LightX] Job created — orderId=${orderId}`);
-
-  // If the response already contains a completed output, return it immediately
-  if (responseBody.output && (responseBody.status === 'active' || responseBody.status === 'completed')) {
-    console.log(`[LightX] Immediate result: ${responseBody.output}`);
-    return responseBody.output;
-  }
-
-  // Step 2 — poll for completion
+  const data = await res.json();
+  const orderId = data.body?.orderId || data.orderId;
   for (let poll = 1; poll <= LIGHTX_MAX_POLLS; poll++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, LIGHTX_POLL_INTERVAL_MS));
-
-    console.log(`[LightX] Polling status (${poll}/${LIGHTX_MAX_POLLS})…`);
-    const statusRes = await fetch(LIGHTX_STATUS_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
-      body: JSON.stringify({ orderId }),
-      signal: AbortSignal.timeout(LIGHTX_FETCH_TIMEOUT_MS),
-    });
-
-    if (!statusRes.ok) {
-      const errBody = await statusRes.text().catch(() => '');
-      throw new Error(`[LightX] Status poll failed ${statusRes.status}: ${errBody.slice(0, 300)}`);
-    }
-
-    const statusRaw = await statusRes.json();
-    const statusBody = statusRaw.body ?? statusRaw;
-    const currentStatus = statusBody.status ?? '';
-
-    console.log(`[LightX] Poll ${poll}/${LIGHTX_MAX_POLLS}: status=${currentStatus}`);
-
-    if (currentStatus === 'active' || currentStatus === 'completed') {
-      const outputUrl = statusBody.output;
-      if (!outputUrl) {
-        throw new Error('[LightX] Status is completed but output URL is missing');
-      }
-      console.log(`[LightX] Try-on complete: ${outputUrl}`);
-      return outputUrl;
-    }
-
-    if (currentStatus === 'failed') {
-      throw new Error(`[LightX] Job failed (orderId=${orderId}): ${statusBody.error || 'Unknown error'}`);
-    }
-
-    // Still processing (status='init' or 'pending') — continue polling
+    await new Promise(r => setTimeout(r, LIGHTX_POLL_INTERVAL_MS));
+    const sRes = await fetch(LIGHTX_STATUS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey! }, body: JSON.stringify({ orderId }) });
+    const sData = await sRes.json();
+    const s = sData.body?.status || sData.status;
+    if (s === 'active' || s === 'completed') return sData.body?.output || sData.output;
+    if (s === 'failed') throw new Error('LightX job failed');
   }
-
-  throw new Error(`[LightX] Timed out after ${LIGHTX_MAX_POLLS} polls (${(LIGHTX_MAX_POLLS * LIGHTX_POLL_INTERVAL_MS) / 1000}s)`);
-}
-
-// ─── Provider dispatcher ────────────────────────────────────────────────────
-
-async function callTryOnEngine(personImageUrl: string, garmentImageUrl: string, category: string = 'tops'): Promise<string> {
-  const provider = getProvider();
-  console.log(`[TryOn] Using provider: ${provider}`);
-
-  if (provider === 'lightx') {
-    return callLightxTryon(personImageUrl, garmentImageUrl, category);
-  }
-  return callFashnTryon(personImageUrl, garmentImageUrl, category);
+  throw new Error('LightX timeout');
 }
 
 // ─── handleTryOn ──────────────────────────────────────────────────────────────
 
-interface HandleTryOnInput {
-  userId: string;
-  productId: string;
-  userPhotoUrl?: string;
-  productImageUrl?: string;
-}
-
-export interface HandleTryOnResult {
-  resultUrl: string;
-  storagePath: string;
-  cached: boolean;
-  fitLabel: string;
-  recommendedSize: string;
-  fitScore: number;
-}
-
-interface CachedTryOnRow {
-  result_url: string;
-  fit_label: string | null;
-  recommended_size: string | null;
-}
-
-export async function handleTryOn(
-  input: HandleTryOnInput,
-  supabase: SupabaseClient<Database>
-): Promise<HandleTryOnResult> {
+export async function handleTryOn(input: any, supabase: SupabaseClient<Database>) {
   const { userId, productId, userPhotoUrl, productImageUrl } = input;
+  const { data: cached } = await supabase.from('tryon_results').select('*').eq('user_id', userId).eq('product_id', productId).single();
+  if (cached?.result_url) return { resultUrl: cached.result_url, cached: true, fitLabel: cached.fit_label || 'True to size', recommendedSize: cached.recommended_size || 'M', fitScore: getFitScore(cached.fit_label || '') };
 
-  // 1. Check cache
-  const { data: cachedRecord } = await supabase
-    .from('tryon_results')
-    .select('result_url, fit_label, recommended_size')
-    .eq('user_id', userId)
-    .eq('product_id', productId)
-    .not('result_url', 'is', null)
-    .neq('result_url', '')
-    .single();
-
-  const cached = cachedRecord as CachedTryOnRow | null;
-  if (cached?.result_url) {
-    let finalUrl = cached.result_url;
-    if (!finalUrl.startsWith('http') && !finalUrl.startsWith('data:')) {
-      const { data: signedData } = await supabase.storage.from('avatars').createSignedUrl(finalUrl, 3600);
-      if (signedData?.signedUrl) finalUrl = signedData.signedUrl;
-    }
-    const fitLabel = cached.fit_label ?? 'True to size';
-    console.log('[TryOn] Cache hit for', userId, productId);
-    return {
-      resultUrl: finalUrl,
-      storagePath: cached.result_url,
-      cached: true,
-      fitLabel,
-      recommendedSize: cached.recommended_size ?? 'M',
-      fitScore: getFitScore(fitLabel),
-    };
-  }
-
-  if (!userPhotoUrl || !productImageUrl) {
-    throw new Error('Both userPhotoUrl and productImageUrl are required for try-on');
-  }
-
-  // 2. Resolve both images to public HTTP URLs (handles data: URIs)
-  const [resolvedPersonUrl, resolvedGarmentUrl] = await Promise.all([
-    resolveToPublicUrl(userPhotoUrl, 'userPhotoUrl', userId, supabase),
-    resolveToPublicUrl(productImageUrl, 'productImageUrl', userId, supabase),
-  ]);
-
-  // 3. Get category and call try-on engine (Fashn or LightX based on TRYON_PROVIDER)
-  const { data: clothingRows } = await supabase
-    .from('clothing_assets')
-    .select('category')
-    .eq('product_id', productId)
-    .limit(1);
-  const category = (clothingRows as any)?.[0]?.category || 'tops';
-  const engineResultUrl = await callTryOnEngine(resolvedPersonUrl, resolvedGarmentUrl, category);
-
-  // 4. Mirror result to R2 for persistence (AI provider URLs may expire)
-  let resultUrl = engineResultUrl;
-  let storagePath = engineResultUrl;
-
-  try {
-    const imageRes = await fetch(engineResultUrl, { signal: AbortSignal.timeout(30_000) });
-    if (imageRes.ok) {
-      const arrayBuf = await imageRes.arrayBuffer();
-      const imageBuffer = Buffer.from(arrayBuf);
-      const contentType = imageRes.headers.get('content-type') ?? 'image/png';
-      const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
-      const filename = `tryons/tryon_${userId}_${productId}_${Date.now()}.${ext}`;
-      const r2Url = await uploadToR2(imageBuffer, filename, contentType);
-      if (r2Url) {
-        resultUrl = r2Url;
-        storagePath = r2Url;
-        console.log('[TryOn] Result mirrored to R2:', r2Url.slice(0, 80));
-      }
-    }
-  } catch (mirrorErr) {
-    console.warn('[TryOn] R2 mirror failed (non-fatal):', (mirrorErr as Error).message);
-  }
-
-  // 5. Fit metadata
-  let fitLabel = 'True to size';
-  let recommendedSize = 'M';
-
-  await (supabase.from('users') as ReturnType<typeof supabase.from>).upsert({ id: userId, email: `${userId}@vexa.guest` }).select();
+  const [pUrl, gUrl] = await Promise.all([resolveToPublicUrl(userPhotoUrl, 'person', userId, supabase), resolveToPublicUrl(productImageUrl, 'garment', userId, supabase)]);
+  const provider = getProvider();
+  const resUrl = provider === 'lightx' ? await callLightxTryon(pUrl, gUrl) : await callFashnTryon(pUrl, gUrl);
 
   const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
-  const { data: sizeChart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
+  const { data: chart } = await supabase.from('size_charts').select('*').eq('product_id', productId);
+  const rec = (user && chart?.length) ? getFitRecommendation(user, chart) : { fitLabel: 'True to size', recommendedSize: 'M' };
 
-  if (user && sizeChart && Array.isArray(sizeChart) && sizeChart.length > 0) {
-    const recommendation = getFitRecommendation(user, sizeChart);
-    fitLabel = recommendation.fitLabel;
-    recommendedSize = recommendation.recommendedSize;
-  }
+  await (supabase.from('tryon_results') as any).upsert({ user_id: userId, product_id: productId, result_url: resUrl, fit_label: rec.fitLabel, recommended_size: rec.recommendedSize, status: 'ready' });
+  return { resultUrl: resUrl, cached: false, ...rec, fitScore: getFitScore(rec.fitLabel) };
+}
 
-  // 6. Cache result
-  console.log(`[TryOn] Caching result for user: ${userId}`);
-  const { error: upsertError } = await (supabase.from('tryon_results') as ReturnType<typeof supabase.from>).upsert(
-    {
-      user_id: userId,
-      product_id: productId,
-      product_image_url: productImageUrl ?? '',
-      result_url: storagePath,
-      fit_label: fitLabel,
-      recommended_size: recommendedSize,
-      status: 'ready',
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,product_id' }
-  );
+// ─── Logging helper ─────────────────────────────────────────────────────────
 
-  if (upsertError) {
-    console.warn('[TryOn] Failed to cache result:', upsertError.message);
-  }
-
-  return {
-    resultUrl,
-    storagePath,
-    cached: false,
-    fitLabel,
-    recommendedSize,
-    fitScore: getFitScore(fitLabel),
-  };
+async function logUsage(supabase: SupabaseClient<Database>, data: any) {
+  try {
+    await (supabase.from('usage_logs') as any).insert({
+      user_id: data.userId, provider: data.provider, status: data.status, error_message: data.errorMessage,
+      latency_ms: data.latencyMs, api_key_index: data.apiKeyIndex, ip_address: data.ipAddress,
+      device_info: data.deviceInfo, user_email: data.userEmail
+    });
+  } catch (e) { console.error('Logging failed', e); }
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-  if (await isRateLimited(ip, 10)) {
-    return NextResponse.json({ error: 'Too many requests. Please wait 60 seconds.' }, { status: 429 });
+  const startTime = Date.now();
+  
+  // DEBUG PING: See if the server is even reachable
+  if (req.headers.get('x-debug-ping') === 'true') {
+    return NextResponse.json({ status: 'alive', time: new Date().toISOString() });
   }
+  const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
+  const ua = req.headers.get('user-agent') || '';
+  let deviceInfo = "Windows";
+  if (ua.includes("Macintosh")) deviceInfo = "Mac";
+  else if (ua.includes("iPhone") || ua.includes("iPad")) deviceInfo = "iOS";
+  else if (ua.includes("Android")) deviceInfo = "Android";
 
+  const supabase = getServiceSupabase();
   try {
-    const body = await req.json();
-    const { userId, userPhotoUrl, productImageUrl, productId } = body as {
-      userId?: string;
-      userPhotoUrl?: string;
-      productImageUrl?: string;
-      productId?: string;
-    };
+    const { userId, userPhotoUrl, productImageUrl, productId } = await req.json();
+    const auth = await authenticateRequest(req, userId);
+    if (auth instanceof NextResponse) return auth;
 
-    if (!productId) {
-      return NextResponse.json({ error: 'productId is required' }, { status: 400 });
+    const result = await handleTryOn({ userId: auth.userId, productId, userPhotoUrl, productImageUrl }, supabase);
+    
+    let email;
+    if (auth.userId !== 'anonymous') {
+      supabase.auth.admin.getUserById(auth.userId).then(r => email = r.data?.user?.email).catch(() => {});
     }
 
-    if (!userPhotoUrl || !productImageUrl) {
-      return NextResponse.json({ error: 'userPhotoUrl and productImageUrl are required' }, { status: 400 });
-    }
-
-    const validatedPhotoUrl = validateSecureUrl(userPhotoUrl, 'userPhotoUrl');
-    const validatedProductUrl = validateSecureUrl(productImageUrl, 'productImageUrl');
-
-    const authResult = await authenticateRequest(req, userId ?? '');
-    if (authResult instanceof NextResponse) return authResult;
-
-    const supabase = getServiceSupabase();
-    const result = await handleTryOn(
-      {
-        userId: authResult.userId,
-        productId,
-        userPhotoUrl: validatedPhotoUrl,
-        productImageUrl: validatedProductUrl,
-      },
-      supabase
-    );
-
-    return NextResponse.json({
-      result_url: result.resultUrl,
-      resultUrl: result.resultUrl,
-      cached: result.cached,
-      status: 'ready',
-      fitLabel: result.fitLabel,
-      recommendedSize: result.recommendedSize,
-      fitScore: result.fitScore,
-    }, { status: 200 });
-
-  } catch (err: unknown) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    console.error('[TryOn] Error:', error.message);
-
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    await logUsage(supabase, { userId: auth.userId, provider: getProvider(), status: 'success', latencyMs: Date.now() - startTime, ipAddress: ip, deviceInfo, userEmail: email });
+    return NextResponse.json({ ...result, status: 'ready' });
+  } catch (err: any) {
+    await logUsage(supabase, { userId: 'anonymous', provider: getProvider(), status: 'error', errorMessage: err.message, latencyMs: Date.now() - startTime, ipAddress: ip, deviceInfo });
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

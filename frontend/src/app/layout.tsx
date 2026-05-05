@@ -1,10 +1,23 @@
 import type { Metadata } from "next";
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import "./globals.css";
-import Navbar from "@/components/Navbar";
-import Footer from "@/components/Footer";
 import { Analytics } from "@vercel/analytics/react";
 import { GoogleAnalytics } from "@next/third-parties/google";
+import GlobalLayout from "@/components/GlobalLayout";
 
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-plus-jakarta-sans',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://vexatryon.in'),
@@ -13,7 +26,7 @@ export const metadata: Metadata = {
     template: '%s | VEXA'
   },
   description: 'Revolutionize your fashion brand with VEXA\'s Virtual Try-On API. Reduce returns by 40% and increase conversions with AI-powered 3D garment visualization.',
-  keywords: ['Virtual Try-On', 'VEXA', 'Fashion AI', 'E-commerce SDK', 'AI Fashion', 'Virtual Fitting Room', 'Digital Garments'],
+  keywords: ['Virtual Try-On', 'VEXA', 'Fashion AI', 'E-commerce Software Development Kit', 'AI Fashion', 'Virtual Fitting Room', 'Digital Garments'],
   authors: [{ name: 'Vexa Team' }],
   creator: 'Vexa Solutions',
   openGraph: {
@@ -49,13 +62,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className={`dark ${plusJakartaSans.variable} ${jetbrainsMono.variable}`}>
       <body className="antialiased">
-        <Navbar />
-        <main className="min-h-screen pt-20">
+        <GlobalLayout>
           {children}
-        </main>
-        <Footer />
+        </GlobalLayout>
         <Analytics />
         <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || ""} />
       </body>
